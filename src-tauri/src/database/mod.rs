@@ -189,7 +189,7 @@ fn seed_locations(conn: &Connection) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         let locs = [("Head Office", "Main Office"), ("Shakargarh Shop", "Shakargarh City")];
         for (name, addr) in &locs {
-            conn.execute("INSERT INTO locations (name, address, created_at) VALUES (?1, ?2, ?3)", [name, addr, &now])?;
+            conn.execute("INSERT INTO locations (name, address, created_at) VALUES (?1, ?2, ?3)", rusqlite::params![name, addr, &now])?;
         }
     }
     Ok(())

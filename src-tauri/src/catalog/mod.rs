@@ -140,13 +140,13 @@ pub fn add_product(conn: &Connection, product: &Product) -> Result<i64, rusqlite
     conn.execute(
         "INSERT INTO products (sku, name, category, color, design, season, cost_price, sale_price, purchase_price, description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
-        (
+        rusqlite::params![
             &product.sku, &product.name, &product.category,
             &product.color, &product.design, &product.season,
             product.cost_price, product.sale_price, product.purchase_price,
             &product.description, &product.tags, product.stock_quantity,
             &product.status, &product.images, product.supplier_id, &now,
-        ),
+        ],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -157,14 +157,14 @@ pub fn update_product(conn: &Connection, product: &Product) -> Result<(), rusqli
         "UPDATE products SET sku=?1, name=?2, category=?3, color=?4, design=?5, season=?6,
          cost_price=?7, sale_price=?8, purchase_price=?9, description=?10, tags=?11, stock_quantity=?12,
          status=?13, images=?14, supplier_id=?15, updated_at=?16 WHERE id=?17",
-        (
+        rusqlite::params![
             &product.sku, &product.name, &product.category,
             &product.color, &product.design, &product.season,
             product.cost_price, product.sale_price, product.purchase_price,
             &product.description, &product.tags, product.stock_quantity,
             &product.status, &product.images, product.supplier_id,
             &now, product.id,
-        ),
+        ],
     )?;
     Ok(())
 }
@@ -202,9 +202,9 @@ pub fn import_from_csv(conn: &Connection, csv_content: &str) -> Result<(), Box<d
         conn.execute(
             "INSERT INTO products (sku, name, category, color, design, season, cost_price, sale_price, purchase_price, description, tags, stock_quantity, status, images, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?7, ?9, ?10, ?11, ?12, '[]', ?13, ?13)",
-            (&record[0], &record[1], &record[2], &record[3], &record[4], &record[5],
+            rusqlite::params![&record[0], &record[1], &record[2], &record[3], &record[4], &record[5],
              record[6].parse::<f64>().unwrap_or(0.0), record[7].parse::<f64>().unwrap_or(0.0),
-             &record[8], &record[9], record[10].parse::<i64>().unwrap_or(0), &record[11], &now),
+             &record[8], &record[9], record[10].parse::<i64>().unwrap_or(0), &record[11], &now],
         )?;
     }
     Ok(())
