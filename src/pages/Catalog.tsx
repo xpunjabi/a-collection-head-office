@@ -4,7 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
 import { 
   Search, Download, Upload, Plus, Edit, Trash2, Image as ImageIcon,
-  X, Palette, Tag, MapPin, Layers
+  X, Palette, MapPin
 } from 'lucide-react'
 
 interface LocationStock {
@@ -27,7 +27,7 @@ export default function Catalog() {
   const [showModal, setShowModal] = useState(false)
   const [editProduct, setEditProduct] = useState<Product | null>(null)
   const [locations, setLocations] = useState<LocationStock[]>([])
-  const [allLocations, setAllLocations] = useState<{id: number; name: string}[]>([])
+  const [, setAllLocations] = useState<{id: number; name: string}[]>([])
 
   // Form states
   const [productCode, setProductCode] = useState('')
@@ -175,13 +175,7 @@ export default function Catalog() {
     } catch (err) { alert(`Import failed: ${err}`) }
   }
 
-  const handleSearchByColor = async () => {
-    if (!colorSearch.trim()) return
-    // The color search will be a separate backend call, but for now just filter frontend
-  }
-
   // --- Derived data ---
-  const allLocs = locations // displayed in form
   const filteredProducts = products.filter(p => {
     const s = searchTerm.toLowerCase()
     const matchSearch = !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s) || (p.color || '').toLowerCase().includes(s)
@@ -190,7 +184,7 @@ export default function Catalog() {
     return matchSearch && matchCat && matchColor
   })
 
-  const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean)))
+  const categories = Array.from(new Set(products.map(p => p.category).filter((c): c is string => !!c)))
 
   return (
     <div className="space-y-6">
