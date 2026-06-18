@@ -5,15 +5,16 @@ use tokio::time::{sleep, Duration};
 use tauri::Emitter;
 
 pub fn start_scheduler(db_path: PathBuf, app_handle: tauri::AppHandle) {
-    tokio::spawn(async move {
-        loop {
-            // Run checks every hour
-            if let Ok(conn) = Connection::open(&db_path) {
-                let _ = run_due_automations(&conn, &db_path, &app_handle);
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+        runtime.block_on(async move {
+            loop {
+                if let Ok(conn) = Connection::open(&db_path) {
+                    let _ = run_due_automations(&conn, &db_path, &app_handle);
+                }
+                sleep(Duration::from_secs(3600)).await;
             }
-            // Sleep for 1 hour (3600 seconds)
-            sleep(Duration::from_secs(3600)).await;
-        }
+        });
     });
 }
 
