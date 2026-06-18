@@ -183,8 +183,7 @@ pub async fn get_customer_report(state: State<'_, DbState>) -> Result<CustomerSu
 
 #[tauri::command]
 pub async fn ask_ai(state: State<'_, DbState>, prompt: String) -> Result<AiResponse, String> {
-    // Phase 1: Check local intents (sync, no async work needed)
-    // We must drop the connection lock before any .await to avoid Send issues.
+    // Phase 1: Check local intents
     let local_result = {
         let conn = state.0.lock().unwrap();
         ai::try_local_intent(&conn, &prompt)
@@ -193,7 +192,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String) -> Result<AiRespo
         return Ok(response);
     }
 
-    // Phase 2: Get AI config synchronously
+    // Phase 2: Get AI config
     let (provider, api_key, model) = {
         let conn = state.0.lock().unwrap();
         ai::get_ai_config(&conn)?
@@ -203,10 +202,18 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String) -> Result<AiRespo
         return Err("AI API key is missing. Please configure it in the Settings module.".to_string());
     }
 
-    // Phase 3: Call AI provider (async, no connection held)
-    let response_text = ai::call_ai_provider(&provider, &api_key, &model, &prompt).await?;
+    // Phase 3: Build system prompt with business context + knowledge
+    let (system_prompt, knowledge_ids) = {
+        let conn = state.0.lock().unwrap();
+        let knowledge = ai::get_all_knowledge(&conn)?;
+        let sys = ai::build_system_prompt(&conn, &prompt)?;
+        (sys, knowledge.iter().map(|k| k.id).collect::<Vec<_>>())
+    };
 
-    // Phase 4: Log the request
+    // Phase 4: Call AI provider
+    let response_text = ai::call_ai_provider(&provider, &api_key, &model, &system_prompt, &prompt).await?;
+
+    // Phase 5: Log the request
     {
         let conn = state.0.lock().unwrap();
         ai::log_request(&conn, &prompt, &response_text, &provider)?;
@@ -217,6 +224,24 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String) -> Result<AiRespo
         detected_action: None,
         action_data: None,
     })
+}
+
+#[tauri::command]
+pub async fn get_knowledge(state: State<'_, DbState>) -> Result<Vec<ai::KnowledgeEntry>, String> {
+    let conn = state.0.lock().unwrap();
+    ai::get_all_knowledge(&conn)
+}
+
+#[tauri::command]
+pub async fn save_knowledge(state: State<'_, DbState>, topic: String, content: String, source: String) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
+    ai::save_knowledge(&conn, &topic, &content, &source)
+}
+
+#[tauri::command]
+pub async fn delete_knowledge(state: State<'_, DbState>, id: i64) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
+    ai::delete_knowledge(&conn, id)
 }
 
 // ==========================================

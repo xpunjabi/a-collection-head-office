@@ -7,7 +7,7 @@ use serde_json::json;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AiResponse {
     pub text: String,
-    pub detected_action: Option<String>, // "low_stock", "product_detail", "eid_campaign", etc.
+    pub detected_action: Option<String>,
     pub action_data: Option<serde_json::Value>,
 }
 
@@ -23,12 +23,123 @@ pub fn log_request(conn: &Connection, prompt: &str, response: &str, provider: &s
     log_ai_request(conn, prompt, response, provider)
 }
 
-pub async fn call_ai_provider(provider: &str, api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+pub fn build_business_context(conn: &Connection) -> Result<String, String> {
+    let prod_count: i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE status='active'", [], |r| r.get(0)).unwrap_or(0);
+    let cust_count: i64 = conn.query_row("SELECT COUNT(*) FROM customers", [], |r| r.get(0)).unwrap_or(0);
+    let order_count: i64 = conn.query_row("SELECT COUNT(*) FROM orders", [], |r| r.get(0)).unwrap_or(0);
+    let low_stock: i64 = conn.query_row("SELECT COUNT(*) FROM products WHERE stock_quantity <= 5 AND status='active'", [], |r| r.get(0)).unwrap_or(0);
+
+    let context = format!(
+        "Current Business Snapshot:\n\
+         - Active Products: {}\n\
+         - Total Customers: {}\n\
+         - Total Orders: {}\n\
+         - Low Stock Items: {}\n",
+        prod_count, cust_count, order_count, low_stock
+    );
+    Ok(context)
+}
+
+pub fn build_system_prompt(conn: &Connection, user_prompt: &str) -> Result<String, String> {
+    let context = build_business_context(conn)?;
+    let knowledge = get_relevant_knowledge(conn, user_prompt)?;
+
+    let mut system = format!(
+        "You are A Collection Head Office Business Assistant — an expert AI agent specialized in managing \
+         a clothing retail business. You have deep knowledge of inventory management, sales analysis, \
+         customer relationships, social media marketing, and business operations for a clothing store.\n\n\
+         Your personality: Professional, helpful, data-driven, and proactive. You speak in a friendly \
+         yet business-like tone.\n\n\
+         Rules:\n\
+         1. Always introduce yourself as the 'Collection Head Office Assistant' when asked.\n\
+         2. You are NOT Google Gemini — you are this business's dedicated AI agent.\n\
+         3. Use the business data provided below to give specific, actionable answers.\n\
+         4. If you don't have enough data, suggest what the user should track.\n\
+         5. For social media posts, offer creative, platform-specific content.\n\
+         6. Keep responses concise and practical.\n\n\
+         {}\n",
+        context
+    );
+
+    if !knowledge.is_empty() {
+        system.push_str("\nRelevant knowledge from past interactions:\n");
+        for k in &knowledge {
+            system.push_str(&format!("- {}: {}\n", k.topic, k.content));
+        }
+    }
+
+    Ok(system)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KnowledgeEntry {
+    pub id: i64,
+    pub topic: String,
+    pub content: String,
+    pub source: String,
+}
+
+pub fn save_knowledge(conn: &Connection, topic: &str, content: &str, source: &str) -> Result<(), String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT OR REPLACE INTO ai_knowledge (topic, content, source, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        [topic, content, source, &now],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn get_all_knowledge(conn: &Connection) -> Result<Vec<KnowledgeEntry>, String> {
+    let mut stmt = conn.prepare("SELECT id, topic, content, source FROM ai_knowledge ORDER BY topic").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| {
+        Ok(KnowledgeEntry {
+            id: row.get(0)?,
+            topic: row.get(1)?,
+            content: row.get(2)?,
+            source: row.get(3)?,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
+pub fn delete_knowledge(conn: &Connection, id: i64) -> Result<(), String> {
+    conn.execute("DELETE FROM ai_knowledge WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn get_relevant_knowledge(conn: &Connection, prompt: &str) -> Result<Vec<KnowledgeEntry>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT id, topic, content, source FROM ai_knowledge WHERE ?1 LIKE '%' || topic || '%' OR topic LIKE '%' || ?1 || '%'"
+    ).map_err(|e| e.to_string())?;
+
+    let lower = prompt.to_lowercase();
+    let rows = stmt.query_map([&lower], |row| {
+        Ok(KnowledgeEntry {
+            id: row.get(0)?,
+            topic: row.get(1)?,
+            content: row.get(2)?,
+            source: row.get(3)?,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
+pub async fn call_ai_provider(provider: &str, api_key: &str, model: &str, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
     match provider {
-        "gemini" => call_gemini(api_key, model, prompt).await,
-        "openai" => call_openai(api_key, model, prompt).await,
-        "claude" => call_claude(api_key, model, prompt).await,
-        "local" => call_local_llm(model, prompt).await,
+        "gemini" => call_gemini(api_key, model, system_prompt, user_prompt).await,
+        "openai" => call_openai(api_key, model, system_prompt, user_prompt).await,
+        "claude" => call_claude(api_key, model, system_prompt, user_prompt).await,
+        "local" => call_local_llm(model, system_prompt, user_prompt).await,
         _ => Err(format!("Unsupported AI provider: {}", provider)),
     }
 }
@@ -67,7 +178,6 @@ fn log_ai_request(conn: &Connection, prompt: &str, response: &str, provider: &st
 fn parse_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
     let lower_prompt = prompt.to_lowercase();
 
-    // Command: Low Stock
     if lower_prompt.contains("low stock") || lower_prompt.contains("stock short") {
         if let Ok(mut stmt) = conn.prepare("SELECT sku, name, stock_quantity FROM products WHERE stock_quantity <= 5 AND status = 'active' ORDER BY stock_quantity ASC") {
             let items_iter = stmt.query_map([], |row| {
@@ -97,14 +207,11 @@ fn parse_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
         }
     }
 
-    // Command: Search for specific SKU or product details
     if lower_prompt.contains("sku ") || lower_prompt.contains("product ") {
-        // Try to extract SKU word
         let words: Vec<&str> = lower_prompt.split_whitespace().collect();
         for (i, word) in words.iter().enumerate() {
             if (*word == "sku" || *word == "product") && i + 1 < words.len() {
                 let target = words[i + 1].trim_matches(|c| c == ',' || c == '.' || c == '"' || c == '\'');
-                // Search in products by sku or name
                 if let Ok(mut stmt) = conn.prepare("SELECT sku, name, category, sale_price, stock_quantity, description FROM products WHERE sku LIKE ?1 OR name LIKE ?1") {
                     let search_term = format!("%{}%", target);
                     if let Ok(mut rows) = stmt.query([&search_term]) {
@@ -136,7 +243,7 @@ fn parse_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
     None
 }
 
-async fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -148,8 +255,11 @@ async fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String,
     );
 
     let payload = json!({
+        "system_instruction": {
+            "parts": [{"text": system_prompt}]
+        },
         "contents": [{
-            "parts": [{"text": prompt}]
+            "parts": [{"text": user_prompt}]
         }]
     });
 
@@ -175,7 +285,7 @@ async fn call_gemini(api_key: &str, model: &str, prompt: &str) -> Result<String,
     Ok(text.to_string())
 }
 
-async fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+async fn call_openai(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -185,7 +295,10 @@ async fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String,
 
     let payload = json!({
         "model": model,
-        "messages": [{"role": "user", "content": prompt}]
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
     });
 
     let res = client.post(url)
@@ -211,7 +324,7 @@ async fn call_openai(api_key: &str, model: &str, prompt: &str) -> Result<String,
     Ok(text.to_string())
 }
 
-async fn call_claude(api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+async fn call_claude(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -222,7 +335,8 @@ async fn call_claude(api_key: &str, model: &str, prompt: &str) -> Result<String,
     let payload = json!({
         "model": model,
         "max_tokens": 1024,
-        "messages": [{"role": "user", "content": prompt}]
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_prompt}]
     });
 
     let res = client.post(url)
@@ -249,7 +363,7 @@ async fn call_claude(api_key: &str, model: &str, prompt: &str) -> Result<String,
     Ok(text.to_string())
 }
 
-async fn call_local_llm(model: &str, prompt: &str) -> Result<String, String> {
+async fn call_local_llm(model: &str, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
         .build()
@@ -257,9 +371,11 @@ async fn call_local_llm(model: &str, prompt: &str) -> Result<String, String> {
 
     let url = "http://localhost:11434/api/generate";
 
+    let full_prompt = format!("{}\n\nUser: {}", system_prompt, user_prompt);
+
     let payload = json!({
         "model": model,
-        "prompt": prompt,
+        "prompt": full_prompt,
         "stream": false
     });
 

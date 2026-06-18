@@ -7,7 +7,9 @@ import {
   Hash, 
   Save, 
   Trash2,
-  Share2
+  Share2,
+  ExternalLink,
+  Brain
 } from 'lucide-react'
 
 interface SocialDraft {
@@ -20,7 +22,7 @@ interface SocialDraft {
 }
 
 export default function SocialHub() {
-  const { products, fetchProducts, updateSetting, fetchSettings } = useAppStore()
+  const { products, fetchProducts, updateSetting } = useAppStore()
   
   const [selectedProductId, setSelectedProductId] = useState<number | ''>('')
   const [postContent, setPostContent] = useState('')
@@ -30,7 +32,6 @@ export default function SocialHub() {
 
   useEffect(() => {
     fetchProducts()
-    fetchSettings()
     loadDrafts()
   }, [])
 
@@ -149,6 +150,38 @@ Tags: ${product.tags || ''}`
     }
   }
 
+  const handleShare = (platform: string, text: string) => {
+    const encoded = encodeURIComponent(text)
+    let url = ''
+    switch (platform.toLowerCase()) {
+      case 'whatsapp':
+        url = `https://wa.me/?text=${encoded}`
+        break
+      case 'facebook':
+        url = `https://www.facebook.com/sharer/sharer.php?quote=${encoded}`
+        break
+      case 'twitter/x':
+        url = `https://twitter.com/intent/tweet?text=${encoded}`
+        break
+      case 'instagram':
+        navigator.clipboard.writeText(text)
+        alert('Instagram caption copied to clipboard! Paste it in Instagram to share.')
+        return
+      default:
+        return
+    }
+    window.open(url, '_blank')
+  }
+
+  const handleSaveToKnowledge = async (content: string, topic: string) => {
+    try {
+      await invoke('save_knowledge', { topic, content, source: 'social-hub' })
+      alert('Saved to business knowledge!')
+    } catch (err) {
+      alert(`Failed to save: ${err}`)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -253,6 +286,32 @@ Tags: ${product.tags || ''}`
               <span>Save Draft</span>
             </button>
           </div>
+
+          {/* Share & Learn Buttons (only show when content exists) */}
+          {postContent.trim() && (
+            <div className="border-t border-gray-800/60 pt-3">
+              <label className="block text-xs font-semibold uppercase text-gray-400 mb-2">Share or Learn</label>
+              <div className="flex flex-wrap gap-2">
+                {selectedPlatforms.map(platform => (
+                  <button
+                    key={platform}
+                    onClick={() => handleShare(platform, postContent)}
+                    className="flex items-center space-x-1 px-3 py-1.5 text-xs rounded-lg border transition-colors bg-slate-800/50 hover:bg-slate-700/50 text-gray-300 border-gray-700"
+                  >
+                    <ExternalLink size={12} />
+                    <span>Share on {platform}</span>
+                  </button>
+                ))}
+                <button
+                  onClick={() => handleSaveToKnowledge(postContent, `Social Post - ${selectedProductId || 'General'}`)}
+                  className="flex items-center space-x-1 px-3 py-1.5 text-xs rounded-lg border transition-colors bg-amber-600/10 hover:bg-amber-600/20 text-amber-400 border-amber-500/10"
+                >
+                  <Brain size={12} />
+                  <span>Teach AI this post style</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Drafts List */}
@@ -273,6 +332,18 @@ Tags: ${product.tags || ''}`
                     <div className="flex gap-1">
                       {d.platforms.map(p => (
                         <span key={p} className="text-[9px] bg-slate-900 text-gray-400 px-1.5 py-0.5 rounded border border-gray-800">{p}</span>
+                      ))}
+                    </div>
+                    <div className="flex gap-1 mt-1">
+                      {d.platforms.map(p => (
+                        <button
+                          key={p}
+                          onClick={(e) => { e.stopPropagation(); handleShare(p, d.content) }}
+                          className="text-[9px] flex items-center space-x-0.5 text-blue-400 hover:text-blue-300"
+                        >
+                          <ExternalLink size={10} />
+                          <span>{p}</span>
+                        </button>
                       ))}
                     </div>
                   </div>

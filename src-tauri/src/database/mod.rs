@@ -117,6 +117,33 @@ fn run_migrations(conn: &mut Connection) -> Result<()> {
         [],
     )?;
 
+    // AI Knowledge table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ai_knowledge (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'manual',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );",
+        [],
+    )?;
+
+    // Business Memory table (auto-learned patterns)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS business_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL,
+            insight TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 1.0,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT NOT NULL,
+            usage_count INTEGER NOT NULL DEFAULT 1
+        );",
+        [],
+    )?;
+
     // Settings table (key-value store for preferences)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (

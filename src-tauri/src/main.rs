@@ -54,6 +54,9 @@ fn main() {
             commands::get_settings,
             commands::update_setting,
             commands::backup_database_now,
+            commands::get_knowledge,
+            commands::save_knowledge,
+            commands::delete_knowledge,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
