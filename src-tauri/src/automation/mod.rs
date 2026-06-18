@@ -17,7 +17,7 @@ pub fn start_scheduler(db_path: PathBuf, app_handle: tauri::AppHandle) {
     });
 }
 
-async fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send>> {
+async fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tauri::AppHandle) -> Result<(), String> {
     // 1. Database Backup automation check
     if is_automation_due(conn, "Database Backup", 1)? {
         if let Ok(backup_path) = get_setting(conn, "backup_path") {
@@ -26,7 +26,7 @@ async fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tau
                 if backup_dir.exists() {
                     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
                     let dest = backup_dir.join(format!("collection_ho_backup_{}.db", timestamp));
-                    fs::copy(db_path, dest)?;
+                    fs::copy(db_path, dest).map_err(|e| e.to_string())?;
                     update_automation_last_run(conn, "Database Backup")?;
                     let _ = app_handle.emit("automation-run", "Database Backup Successful");
                 }
@@ -45,7 +45,7 @@ async fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tau
                     
                     // Generate a quick text report
                     if let Ok(report_text) = compile_weekly_summary(conn) {
-                        fs::write(dest, report_text)?;
+                        fs::write(dest, report_text).map_err(|e| e.to_string())?;
                         update_automation_last_run(conn, "Weekly Performance Report")?;
                         let _ = app_handle.emit("automation-run", "Weekly Performance Report Created");
                     }
@@ -57,15 +57,15 @@ async fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tau
     Ok(())
 }
 
-fn get_setting(conn: &Connection, key: &str) -> Result<String, rusqlite::Error> {
+fn get_setting(conn: &Connection, key: &str) -> Result<String, String> {
     conn.query_row(
         "SELECT value FROM settings WHERE key = ?1",
         [key],
         |row| row.get(0),
-    )
+    ).map_err(|e| e.to_string())
 }
 
-fn is_automation_due(conn: &Connection, name: &str, interval_days: i64) -> Result<bool, rusqlite::Error> {
+fn is_automation_due(conn: &Connection, name: &str, interval_days: i64) -> Result<bool, String> {
     let row: Option<(String, i64)> = conn.query_row(
         "SELECT last_run, active FROM automations WHERE name = ?1",
         [name],
@@ -91,16 +91,16 @@ fn is_automation_due(conn: &Connection, name: &str, interval_days: i64) -> Resul
     Ok(false)
 }
 
-fn update_automation_last_run(conn: &Connection, name: &str) -> Result<(), rusqlite::Error> {
+fn update_automation_last_run(conn: &Connection, name: &str) -> Result<(), String> {
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "UPDATE automations SET last_run = ?1 WHERE name = ?2",
         params![now, name],
-    )?;
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-fn compile_weekly_summary(conn: &Connection) -> Result<String, Box<dyn std::error::Error + Send>> {
+fn compile_weekly_summary(conn: &Connection) -> Result<String, String> {
     let last_week = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
     
     let (total_orders, sales, profit): (i64, f64, f64) = conn.query_row(
@@ -108,13 +108,13 @@ fn compile_weekly_summary(conn: &Connection) -> Result<String, Box<dyn std::erro
          FROM orders WHERE order_date >= ?1",
         [&last_week],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    )?;
+    ).map_err(|e| e.to_string())?;
 
     let low_stock_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM products WHERE stock_quantity <= 5 AND status = 'active'",
         [],
         |row| row.get(0),
-    )?;
+    ).map_err(|e| e.to_string())?;
 
     let report = format!(
         "=========================================\n\
