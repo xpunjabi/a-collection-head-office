@@ -1,18 +1,14 @@
 import React, { useEffect, useState } from 'react'
-import { useAppStore, Customer, OrderHistory, Product } from '../stores/store'
+import { useAppStore, Customer, OrderHistory } from '../stores/store'
 import { 
   Search, 
-  Plus, 
   UserPlus, 
   Phone, 
-  MapPin, 
   Calendar, 
   ShoppingBag, 
   User, 
   Trash2,
-  X,
-  CreditCard,
-  DollarSign
+  X
 } from 'lucide-react'
 
 export default function Customers() {

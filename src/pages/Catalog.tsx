@@ -3,15 +3,13 @@ import { useAppStore, Product } from '../stores/store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { 
   Search, 
-  Filter, 
   Download, 
   Upload, 
   Plus, 
   Edit, 
   Trash2, 
   Image as ImageIcon,
-  X,
-  FileSpreadsheet
+  X
 } from 'lucide-react'
 
 export default function Catalog() {
@@ -454,7 +452,7 @@ export default function Catalog() {
               <div>
                 <label className="block text-xs font-semibold uppercase text-gray-400 mb-2">Product Images</label>
                 <div className="flex flex-wrap gap-2">
-                  {images.map((imgName, idx) => (
+                  {images.map((_imgName, idx) => (
                     <div key={idx} className="relative w-16 h-16 bg-slate-950 border border-gray-800 rounded-lg overflow-hidden flex items-center justify-center">
                       <ImageIcon size={18} className="text-gray-600" />
                       <button 

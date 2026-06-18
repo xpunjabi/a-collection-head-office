@@ -1,15 +1,12 @@
-import React, { useEffect, useState } from 'react'
-import { useAppStore, Product } from '../stores/store'
+import { useEffect, useState } from 'react'
+import { useAppStore } from '../stores/store'
 import { invoke } from '@tauri-apps/api/core'
 import { 
-  BarChart, 
-  Layers, 
   AlertTriangle, 
   Flame, 
   TrendingUp, 
   Plus, 
-  Minus,
-  Sparkles
+  Minus
 } from 'lucide-react'
 
 interface SummaryData {
@@ -21,7 +18,7 @@ interface SummaryData {
 }
 
 export default function Inventory() {
-  const { products, fetchProducts } = useAppStore()
+  const { fetchProducts } = useAppStore()
   const [summary, setSummary] = useState<SummaryData>({
     total_products: 0,
     total_stock: 0,

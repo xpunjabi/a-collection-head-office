@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/store'
 import { invoke } from '@tauri-apps/api/core'
 import { 
@@ -12,8 +12,6 @@ import {
   FileText
 } from 'lucide-react'
 import { 
-  BarChart, 
-  Bar, 
   XAxis, 
   YAxis, 
   CartesianGrid, 

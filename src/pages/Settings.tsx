@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/store'
 import { open } from '@tauri-apps/plugin-dialog'
-import { invoke } from '@tauri-apps/api/core'
 import { Shield, Key, Server, HardDrive, RefreshCw } from 'lucide-react'
 
 export default function Settings() {

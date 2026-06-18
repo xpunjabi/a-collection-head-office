@@ -42,8 +42,7 @@ function App() {
     setVectorAssistant,
     aiMessages,
     isAiLoading,
-    sendAiMessage,
-    clearAiChat
+    sendAiMessage
   } = useAppStore()
 
   const renderPage = () => {

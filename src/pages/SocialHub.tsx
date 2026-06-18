@@ -1,14 +1,11 @@
-import React, { useState, useEffect } from 'react'
-import { useAppStore, Product } from '../stores/store'
+import { useState, useEffect } from 'react'
+import { useAppStore } from '../stores/store'
 import { invoke } from '@tauri-apps/api/core'
 import { 
-  Facebook, 
   Instagram, 
-  Send, 
   Sparkles, 
   Hash, 
   Save, 
-  FileText,
   Trash2,
   Share2
 } from 'lucide-react'
@@ -23,7 +20,7 @@ interface SocialDraft {
 }
 
 export default function SocialHub() {
-  const { products, fetchProducts, settings, updateSetting, fetchSettings } = useAppStore()
+  const { products, fetchProducts, updateSetting, fetchSettings } = useAppStore()
   
   const [selectedProductId, setSelectedProductId] = useState<number | ''>('')
   const [postContent, setPostContent] = useState('')

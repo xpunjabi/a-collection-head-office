@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/store'
 import { invoke } from '@tauri-apps/api/core'
 import { 
   Play, 
   CheckCircle, 
   Clock, 
-  Settings as SettingsIcon,
   Shield, 
   RefreshCw
 } from 'lucide-react'
@@ -19,7 +18,7 @@ interface AutomationTask {
 }
 
 export default function Automation() {
-  const { settings, fetchSettings } = useAppStore()
+  const { fetchSettings } = useAppStore()
   const [tasks, setTasks] = useState<AutomationTask[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [backupLog, setBackupLog] = useState<string[]>([])

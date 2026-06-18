@@ -1,9 +1,8 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { useAppStore } from '../stores/store'
 import { invoke } from '@tauri-apps/api/core'
 import { 
   FileText, 
-  Calendar, 
   Download, 
   TrendingUp, 
   Layers, 
@@ -12,7 +11,7 @@ import {
 } from 'lucide-react'
 
 export default function Reports() {
-  const { settings } = useAppStore()
+  useAppStore()
   
   // Date Filters
   const [startDate, setStartDate] = useState('2026-01-01')
