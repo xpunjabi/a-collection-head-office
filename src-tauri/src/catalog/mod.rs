@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 use rusqlite::{Connection, params};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::fs;
 use image::{ImageReader, imageops::FilterType};
 use csv::{ReaderBuilder, WriterBuilder};

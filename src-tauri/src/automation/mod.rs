@@ -9,7 +9,7 @@ pub fn start_scheduler(db_path: PathBuf, app_handle: tauri::AppHandle) {
         loop {
             // Run checks every hour
             if let Ok(conn) = Connection::open(&db_path) {
-                let _ = run_due_automations(&conn, &db_path, &app_handle).await;
+                let _ = run_due_automations(&conn, &db_path, &app_handle);
             }
             // Sleep for 1 hour (3600 seconds)
             sleep(Duration::from_secs(3600)).await;
@@ -17,7 +17,7 @@ pub fn start_scheduler(db_path: PathBuf, app_handle: tauri::AppHandle) {
     });
 }
 
-async fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tauri::AppHandle) -> Result<(), String> {
+fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tauri::AppHandle) -> Result<(), String> {
     // 1. Database Backup automation check
     if is_automation_due(conn, "Database Backup", 1)? {
         if let Ok(backup_path) = get_setting(conn, "backup_path") {

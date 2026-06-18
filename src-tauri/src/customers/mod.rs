@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use rusqlite::{Connection, params, Transaction};
+use rusqlite::{Connection, params};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Customer {
