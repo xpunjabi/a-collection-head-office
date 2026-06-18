@@ -17,7 +17,7 @@ pub fn start_scheduler(db_path: PathBuf, app_handle: tauri::AppHandle) {
     });
 }
 
-async fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send>> {
     // 1. Database Backup automation check
     if is_automation_due(conn, "Database Backup", 1)? {
         if let Ok(backup_path) = get_setting(conn, "backup_path") {
@@ -100,7 +100,7 @@ fn update_automation_last_run(conn: &Connection, name: &str) -> Result<(), rusql
     Ok(())
 }
 
-fn compile_weekly_summary(conn: &Connection) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+fn compile_weekly_summary(conn: &Connection) -> Result<String, Box<dyn std::error::Error + Send>> {
     let last_week = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
     
     let (total_orders, sales, profit): (i64, f64, f64) = conn.query_row(
