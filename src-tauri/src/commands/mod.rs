@@ -1,8 +1,9 @@
-use crate::catalog::{self, Product};
+use crate::catalog::{self, Product, ProductLocationStock};
 use crate::inventory::{self, InventorySummary, LowStockItem, DeadStockItem, BestSellerItem};
 use crate::customers::{self, Customer, OrderItemInput, OrderHistory};
 use crate::reports::{self, SalesReport, InventoryReport, CustomerSummaryReport};
-use crate::ai::{self, AiResponse};
+use crate::locations::{self, Location};
+use crate::ai::{self, AiResponse, KnowledgeEntry};
 use crate::utils;
 use std::sync::Mutex;
 use std::path::Path;
@@ -11,31 +12,27 @@ use tauri::State;
 
 pub struct DbState(pub Mutex<Connection>);
 
-// Helper to update settings
 fn set_setting_val(conn: &Connection, key: &str, value: &str) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2);",
-        [key, value],
-    )?;
+    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2);", [key, value])?;
     Ok(())
 }
 
 fn get_setting_val(conn: &Connection, key: &str) -> Result<String, rusqlite::Error> {
-    conn.query_row(
-        "SELECT value FROM settings WHERE key = ?1",
-        [key],
-        |row| row.get(0),
-    )
+    conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| row.get(0))
 }
 
-// ==========================================
-// CATALOG COMMANDS
-// ==========================================
+// ==================== CATALOG ====================
 
 #[tauri::command]
 pub async fn get_products(state: State<'_, DbState>) -> Result<Vec<Product>, String> {
     let conn = state.0.lock().unwrap();
     catalog::get_all_products(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_product(state: State<'_, DbState>, id: i64) -> Result<Product, String> {
+    let conn = state.0.lock().unwrap();
+    catalog::get_product_by_id(&conn, id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -57,6 +54,24 @@ pub async fn delete_product(state: State<'_, DbState>, id: i64) -> Result<(), St
 }
 
 #[tauri::command]
+pub async fn get_product_locations(state: State<'_, DbState>, product_id: i64) -> Result<Vec<ProductLocationStock>, String> {
+    let conn = state.0.lock().unwrap();
+    catalog::get_product_locations(&conn, product_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn upsert_product_location(state: State<'_, DbState>, product_id: i64, location_id: i64, quantity: i64) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
+    catalog::upsert_product_location(&conn, product_id, location_id, quantity).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn search_products_by_color(state: State<'_, DbState>, color: String) -> Result<Vec<Product>, String> {
+    let conn = state.0.lock().unwrap();
+    catalog::search_by_color(&conn, &color).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn export_products_csv(state: State<'_, DbState>) -> Result<String, String> {
     let conn = state.0.lock().unwrap();
     catalog::export_to_csv(&conn).map_err(|e| e.to_string())
@@ -70,7 +85,6 @@ pub async fn import_products_csv(state: State<'_, DbState>, csv_content: String)
 
 #[tauri::command]
 pub async fn upload_product_image(src_path: String, format_type: String) -> Result<String, String> {
-    // Save to local app images directory
     let src = Path::new(&src_path);
     if !src.exists() {
         return Err("Source image file does not exist.".to_string());
@@ -79,9 +93,27 @@ pub async fn upload_product_image(src_path: String, format_type: String) -> Resu
     catalog::process_and_save_image(src, &images_dir, &format_type).map_err(|e| e.to_string())
 }
 
-// ==========================================
-// INVENTORY COMMANDS
-// ==========================================
+// ==================== LOCATIONS ====================
+
+#[tauri::command]
+pub async fn get_locations(state: State<'_, DbState>) -> Result<Vec<Location>, String> {
+    let conn = state.0.lock().unwrap();
+    locations::get_all_locations(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_location(state: State<'_, DbState>, name: String, address: String) -> Result<i64, String> {
+    let conn = state.0.lock().unwrap();
+    locations::add_location(&conn, &name, &address).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_location(state: State<'_, DbState>, id: i64, name: String, address: String, is_active: bool) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
+    locations::update_location(&conn, id, &name, &address, is_active).map_err(|e| e.to_string())
+}
+
+// ==================== INVENTORY ====================
 
 #[tauri::command]
 pub async fn get_inventory_summary(state: State<'_, DbState>) -> Result<InventorySummary, String> {
@@ -113,9 +145,7 @@ pub async fn adjust_stock(state: State<'_, DbState>, product_id: i64, adjustment
     inventory::adjust_stock(&conn, product_id, adjustment).map_err(|e| e.to_string())
 }
 
-// ==========================================
-// CUSTOMER COMMANDS
-// ==========================================
+// ==================== CUSTOMERS ====================
 
 #[tauri::command]
 pub async fn get_customers(state: State<'_, DbState>) -> Result<Vec<Customer>, String> {
@@ -143,8 +173,6 @@ pub async fn delete_customer(state: State<'_, DbState>, id: i64) -> Result<(), S
 
 #[tauri::command]
 pub async fn create_order(state: State<'_, DbState>, customer_id: i64, items: Vec<OrderItemInput>) -> Result<i64, String> {
-    // Note: create_order takes &mut Connection because it uses transaction.
-    // Lock database and get a mutable reference.
     let mut conn = state.0.lock().unwrap();
     customers::create_order(&mut conn, customer_id, items).map_err(|e| e.to_string())
 }
@@ -155,9 +183,7 @@ pub async fn get_customer_history(state: State<'_, DbState>, customer_id: i64) -
     customers::get_customer_purchase_history(&conn, customer_id).map_err(|e| e.to_string())
 }
 
-// ==========================================
-// REPORT COMMANDS
-// ==========================================
+// ==================== REPORTS ====================
 
 #[tauri::command]
 pub async fn get_sales_report(state: State<'_, DbState>, start_date: String, end_date: String) -> Result<SalesReport, String> {
@@ -177,57 +203,39 @@ pub async fn get_customer_report(state: State<'_, DbState>) -> Result<CustomerSu
     reports::generate_customer_report(&conn).map_err(|e| e.to_string())
 }
 
-// ==========================================
-// AI ASSISTANT COMMANDS
-// ==========================================
+// ==================== AI ====================
 
 #[tauri::command]
 pub async fn ask_ai(state: State<'_, DbState>, prompt: String) -> Result<AiResponse, String> {
-    // Phase 1: Check local intents
     let local_result = {
         let conn = state.0.lock().unwrap();
         ai::try_local_intent(&conn, &prompt)
     };
-    if let Some(response) = local_result {
-        return Ok(response);
-    }
+    if let Some(response) = local_result { return Ok(response); }
 
-    // Phase 2: Get AI config
     let (provider, api_key, model) = {
         let conn = state.0.lock().unwrap();
         ai::get_ai_config(&conn)?
     };
-
     if api_key.is_empty() && provider != "local" {
-        return Err("AI API key is missing. Please configure it in the Settings module.".to_string());
+        return Err("AI API key is missing. Please configure it in Settings.".to_string());
     }
 
-    // Phase 3: Build system prompt with business context + knowledge
-    let (system_prompt, knowledge_ids) = {
+    let (system_prompt, _) = {
         let conn = state.0.lock().unwrap();
-        let knowledge = ai::get_all_knowledge(&conn)?;
-        let sys = ai::build_system_prompt(&conn, &prompt)?;
-        (sys, knowledge.iter().map(|k| k.id).collect::<Vec<_>>())
+        (ai::build_system_prompt(&conn, &prompt)?, ())
     };
 
-    // Phase 4: Call AI provider
     let response_text = ai::call_ai_provider(&provider, &api_key, &model, &system_prompt, &prompt).await?;
-
-    // Phase 5: Log the request
     {
         let conn = state.0.lock().unwrap();
         ai::log_request(&conn, &prompt, &response_text, &provider)?;
     }
-
-    Ok(AiResponse {
-        text: response_text,
-        detected_action: None,
-        action_data: None,
-    })
+    Ok(AiResponse { text: response_text, detected_action: None, action_data: None })
 }
 
 #[tauri::command]
-pub async fn get_knowledge(state: State<'_, DbState>) -> Result<Vec<ai::KnowledgeEntry>, String> {
+pub async fn get_knowledge(state: State<'_, DbState>) -> Result<Vec<KnowledgeEntry>, String> {
     let conn = state.0.lock().unwrap();
     ai::get_all_knowledge(&conn)
 }
@@ -244,9 +252,7 @@ pub async fn delete_knowledge(state: State<'_, DbState>, id: i64) -> Result<(), 
     ai::delete_knowledge(&conn, id)
 }
 
-// ==========================================
-// SETTINGS COMMANDS
-// ==========================================
+// ==================== SETTINGS ====================
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, DbState>) -> Result<std::collections::HashMap<String, String>, String> {
@@ -257,13 +263,8 @@ pub async fn get_settings(state: State<'_, DbState>) -> Result<std::collections:
         let v: String = row.get(1)?;
         Ok((k, v))
     }).map_err(|e| e.to_string())?;
-
     let mut map = std::collections::HashMap::new();
-    for row in rows {
-        if let Ok((k, v)) = row {
-            map.insert(k, v);
-        }
-    }
+    for row in rows { if let Ok((k, v)) = row { map.insert(k, v); } }
     Ok(map)
 }
 
@@ -277,21 +278,12 @@ pub async fn update_setting(state: State<'_, DbState>, key: String, value: Strin
 pub async fn backup_database_now(state: State<'_, DbState>) -> Result<String, String> {
     let conn = state.0.lock().unwrap();
     let backup_path = get_setting_val(&conn, "backup_path").map_err(|e| e.to_string())?;
-    
-    if backup_path.is_empty() {
-        return Err("Backup path is not configured in Settings.".to_string());
-    }
-
+    if backup_path.is_empty() { return Err("Backup path is not configured.".to_string()); }
     let backup_dir = Path::new(&backup_path);
-    if !backup_dir.exists() {
-        return Err("Configured backup path does not exist on your computer.".to_string());
-    }
-
+    if !backup_dir.exists() { return Err("Backup path does not exist.".to_string()); }
     let db_src = utils::get_db_path();
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
     let dest = backup_dir.join(format!("manual_backup_{}.db", timestamp));
-
-    std::fs::copy(db_src, &dest).map_err(|e| format!("Failed to copy file: {}", e))?;
-
+    std::fs::copy(db_src, &dest).map_err(|e| format!("Failed to copy: {}", e))?;
     Ok(dest.to_string_lossy().to_string())
 }

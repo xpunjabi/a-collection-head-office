@@ -1,4 +1,3 @@
-// Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod database;
@@ -6,6 +5,7 @@ mod catalog;
 mod inventory;
 mod customers;
 mod reports;
+mod locations;
 mod ai;
 mod automation;
 mod utils;
@@ -23,16 +23,19 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .manage(DbState(std::sync::Mutex::new(conn)))
         .setup(move |app| {
-            // Start background automation scheduler
             let app_handle = app.handle().clone();
             automation::start_scheduler(db_path, app_handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_products,
+            commands::get_product,
             commands::add_product,
             commands::update_product,
             commands::delete_product,
+            commands::get_product_locations,
+            commands::upsert_product_location,
+            commands::search_products_by_color,
             commands::export_products_csv,
             commands::import_products_csv,
             commands::upload_product_image,
@@ -57,6 +60,9 @@ fn main() {
             commands::get_knowledge,
             commands::save_knowledge,
             commands::delete_knowledge,
+            commands::get_locations,
+            commands::add_location,
+            commands::update_location,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -8,6 +8,7 @@ import {
   Bot,
   FileText,
   Settings as SettingsIcon,
+  MapPin,
   ChevronLeft,
   MessageSquare,
   Send,
@@ -22,6 +23,7 @@ import Inventory from './pages/Inventory'
 import Automation from './pages/Automation'
 import Reports from './pages/Reports'
 import SettingsPage from './pages/Settings'
+import LocationsPage from './pages/Locations'
 
 const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -29,6 +31,7 @@ const tabs = [
   { id: 'social', label: 'Social Hub', icon: Share2 },
   { id: 'customers', label: 'Customers', icon: Users },
   { id: 'inventory', label: 'Inventory', icon: Package },
+  { id: 'locations', label: 'Locations', icon: MapPin },
   { id: 'automation', label: 'Automation', icon: Bot },
   { id: 'reports', label: 'Reports', icon: FileText },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
@@ -53,6 +56,7 @@ function App() {
       case 'customers': return <Customers />
       case 'inventory': return <Inventory />
       case 'automation': return <Automation />
+      case 'locations': return <LocationsPage />
       case 'reports': return <Reports />
       case 'settings': return <SettingsPage />
       default: return <Dashboard />

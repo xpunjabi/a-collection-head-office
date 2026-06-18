@@ -6,13 +6,18 @@ export interface Product {
   sku: string;
   name: string;
   category?: string;
+  color?: string;
+  design?: string;
+  season?: string;
   cost_price: number;
   sale_price: number;
+  purchase_price: number;
   description?: string;
   tags?: string;
   stock_quantity: number;
   status: string;
-  images: string; // JSON array string
+  images: string;
+  supplier_id?: number;
   created_at?: string;
   updated_at?: string;
 }
@@ -63,7 +68,7 @@ interface AppState {
   products: Product[];
   isLoadingProducts: boolean;
   fetchProducts: () => Promise<void>;
-  addProduct: (product: Product) => Promise<void>;
+  addProduct: (product: Product) => Promise<number>;
   updateProduct: (product: Product) => Promise<void>;
   deleteProduct: (id: number) => Promise<void>;
   exportProductsCsv: () => Promise<string>;
@@ -121,8 +126,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   addProduct: async (product) => {
     try {
-      await invoke('add_product', { product });
+      const id: number = await invoke('add_product', { product });
       await get().fetchProducts();
+      return id;
     } catch (err) {
       throw new Error(String(err));
     }
