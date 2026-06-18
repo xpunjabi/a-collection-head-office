@@ -167,13 +167,15 @@ fn seed_initial_data(conn: &mut Connection) -> Result<()> {
     )?;
 
     if settings_count == 0 {
+        let business_profile = r#"{"business_name":"A Collection","industry":"Ladies Clothing Retail","owner":"Ali","purchase_city":"Faisalabad","sales_areas":["Narowal","Shakargarh","Zafarwal","Nearby Villages"],"sales_channels":["Facebook","WhatsApp","Door To Door"],"target_customers":{"gender":"Female","income_group":"Middle Income","preferred_products":["3 Piece Suits","Lawn","Cotton","Printed Designs","Embroidery"]},"business_goals":["Increase Profit","Increase Sales","Reduce Dead Stock","Improve Customer Retention","Improve Marketing"],"assistant_roles":["Inventory Manager","Sales Analyst","Marketing Assistant","Business Advisor","Purchase Planner"]}"#;
         let default_settings = [
             ("theme", "dark"),
             ("ai_provider", "gemini"),
             ("ai_api_key", ""),
             ("ai_model", "gemini-1.5-flash"),
             ("backup_path", ""),
-            ("backup_interval_days", "7")
+            ("backup_interval_days", "7"),
+            ("business_profile", business_profile),
         ];
 
         for (k, v) in default_settings.iter() {
