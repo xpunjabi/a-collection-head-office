@@ -19,7 +19,7 @@ jobs:
           cache: npm
 
       - name: Install frontend deps
-        run: npm ci
+        run: npm install
 
       - name: TypeScript check
         run: npx tsc --noEmit
