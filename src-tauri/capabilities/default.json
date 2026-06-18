@@ -1,0 +1,14 @@
+{
+  "$schema": "../schemas/capability.json",
+  "identifier": "default",
+  "description": "Default permissions for A Collection Head Office",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "dialog:default",
+    "fs:default"
+  ]
+}

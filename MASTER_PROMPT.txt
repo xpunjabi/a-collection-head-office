@@ -1,0 +1,657 @@
+You are a Principal Software Architect, Senior Rust Engineer, Senior Tauri Engineer, Senior React Engineer, Senior DevOps Engineer, and Senior Product Designer.
+
+Your task is to generate a COMPLETE production-ready GitHub repository.
+
+Project Name:
+
+A Collection Head Office
+
+Mission:
+
+Build a lightweight, local-first, AI-assisted business operating system for a small clothing business.
+
+The application must help a solo business owner manage:
+
+- Product catalog
+- Product images
+- Social media workflow
+- AI content generation
+- Customer management
+- Inventory management
+- Business automation
+
+This project is intended for real-world daily use.
+
+The user is NOT a professional software engineer.
+
+The codebase must prioritize:
+
+- Simplicity
+- Maintainability
+- Stability
+- Performance
+- Low memory usage
+- Low CPU usage
+- Local-first design
+
+Avoid unnecessary complexity.
+
+Never introduce:
+
+- Kubernetes
+- Microservices
+- Redis
+- RabbitMQ
+- Event buses
+- Enterprise architecture patterns
+
+Use a monolithic architecture.
+
+==================================================
+TECH STACK
+==================================================
+
+Frontend:
+
+- React
+- TypeScript
+- Vite
+- TailwindCSS
+- Shadcn UI
+
+Desktop:
+
+- Tauri 2.x
+
+Backend:
+
+- Rust
+
+Database:
+
+- SQLite
+
+State Management:
+
+- Zustand
+
+Forms:
+
+- React Hook Form
+
+Validation:
+
+- Zod
+
+Charts:
+
+- Recharts
+
+File Storage:
+
+- Local filesystem
+
+AI Integration:
+
+Provider-agnostic architecture.
+
+Create an AI abstraction layer.
+
+Must support future integrations:
+
+- Gemini CLI
+- Gemini API
+- OpenAI API
+- Claude API
+- Local LLMs
+
+AI providers must be swappable.
+
+==================================================
+CORE DESIGN PRINCIPLES
+==================================================
+
+1. Offline-first
+
+Application must remain useful without internet.
+
+2. Local-first
+
+All business data stored locally.
+
+3. Fast startup
+
+Target startup under 3 seconds.
+
+4. Low RAM usage
+
+Target under 300MB.
+
+5. Modular architecture
+
+Future modules must be installable.
+
+==================================================
+APPLICATION LAYOUT
+==================================================
+
+Three-panel layout.
+
+LEFT SIDEBAR
+
+Modules:
+
+- Dashboard
+- Catalog
+- Social Hub
+- Customers
+- Inventory
+- Automation
+- Reports
+- Settings
+
+CENTER PANEL
+
+Main working area.
+
+RIGHT PANEL
+
+Persistent AI Assistant.
+
+Can be collapsed.
+
+==================================================
+DASHBOARD MODULE
+==================================================
+
+Show:
+
+- Total products
+- Active inventory
+- Low stock items
+- Recent customers
+- Pending tasks
+- Recent social posts
+- AI recommendations
+
+Quick actions:
+
+- Add Product
+- Create Post
+- Update Catalog
+- Generate Report
+
+==================================================
+CATALOG MODULE
+==================================================
+
+Product Fields:
+
+- Product ID
+- SKU
+- Name
+- Category
+- Cost Price
+- Sale Price
+- Profit Margin
+- Description
+- Tags
+- Stock Quantity
+- Status
+- Images
+- Created Date
+- Updated Date
+
+Features:
+
+- CRUD
+- Search
+- Filters
+- Sort
+- Bulk Edit
+- Bulk Delete
+- Bulk Export
+
+Exports:
+
+- PDF
+- CSV
+- Excel
+
+==================================================
+IMAGE MANAGEMENT
+==================================================
+
+Features:
+
+- Drag and drop upload
+- Multi image upload
+- Image compression
+- Image resize
+- Thumbnail generation
+
+Generate:
+
+- Facebook format
+- Instagram format
+- WhatsApp format
+
+==================================================
+SOCIAL HUB
+==================================================
+
+Create a unified workspace.
+
+Platforms:
+
+- Facebook
+- Instagram
+- WhatsApp Channel
+- X
+
+Features:
+
+- Content Drafts
+- Post Templates
+- Campaigns
+- Scheduling Queue
+- Reusable Captions
+
+AI Actions:
+
+- Generate Facebook Post
+- Generate Instagram Caption
+- Generate WhatsApp Text
+- Generate Promotional Message
+- Generate Hashtags
+
+==================================================
+AI ASSISTANT
+==================================================
+
+Persistent assistant panel.
+
+Capabilities:
+
+- Read catalog
+- Read inventory
+- Read customer records
+- Generate content
+- Analyze sales
+- Suggest promotions
+
+Example commands:
+
+"Generate Facebook post for SKU 1003"
+
+"Show low stock items"
+
+"Create Eid campaign"
+
+"Suggest products not promoted recently"
+
+==================================================
+CUSTOMER MODULE
+==================================================
+
+Fields:
+
+- Customer ID
+- Name
+- Phone
+- Location
+- Notes
+- Last Purchase
+- Total Orders
+
+Features:
+
+- Search
+- CRUD
+- Purchase History
+- Follow-up Reminders
+
+==================================================
+INVENTORY MODULE
+==================================================
+
+Features:
+
+- Stock tracking
+- Low stock alerts
+- Dead stock detection
+- Best sellers
+
+Metrics:
+
+- Current stock
+- Monthly movement
+- Profit estimation
+
+==================================================
+AUTOMATION MODULE
+==================================================
+
+Create automation engine.
+
+Examples:
+
+- Daily reminders
+- Catalog backup
+- Weekly reports
+- Product promotion reminders
+
+Architecture must support future custom automations.
+
+==================================================
+REPORTING MODULE
+==================================================
+
+Generate:
+
+- Sales report
+- Inventory report
+- Customer report
+- Promotion report
+
+Exports:
+
+- PDF
+- Excel
+
+==================================================
+SETTINGS MODULE
+==================================================
+
+Settings:
+
+- Database backup
+- Restore
+- Theme
+- AI provider
+- Export settings
+
+==================================================
+DATABASE
+==================================================
+
+Use SQLite.
+
+Generate:
+
+- Migrations
+- Seed system
+- Repository pattern
+
+Include:
+
+- ERD diagram
+- Schema documentation
+
+==================================================
+RUST BACKEND
+==================================================
+
+Use Tauri commands.
+
+Separate modules:
+
+src-tauri/
+
+commands/
+database/
+catalog/
+inventory/
+customers/
+automation/
+reports/
+ai/
+utils/
+
+==================================================
+FRONTEND STRUCTURE
+==================================================
+
+src/
+
+components/
+layouts/
+pages/
+hooks/
+stores/
+services/
+types/
+utils/
+modules/
+
+dashboard/
+catalog/
+social/
+customers/
+inventory/
+automation/
+reports/
+settings/
+assistant/
+
+==================================================
+ERROR HANDLING
+==================================================
+
+Create:
+
+- Global error boundary
+- Logging service
+- User-friendly messages
+
+No silent failures.
+
+==================================================
+SECURITY
+==================================================
+
+Input validation.
+
+SQL injection protection.
+
+Secure local storage.
+
+==================================================
+TESTING
+==================================================
+
+Generate:
+
+- Unit tests
+- Integration tests
+
+==================================================
+GITHUB ACTIONS
+==================================================
+
+Generate complete workflows.
+
+Workflows:
+
+1. CI
+
+- Install dependencies
+- Run lint
+- Run tests
+- Build app
+
+2. Windows Build
+
+Generate:
+
+- EXE installer
+
+Upload artifact.
+
+3. Android Build
+
+Generate:
+
+- APK
+
+Upload artifact.
+
+4. Release Workflow
+
+On tag:
+
+- Build all targets
+- Create GitHub Release
+- Upload binaries
+
+==================================================
+DOCUMENTATION
+==================================================
+
+Generate:
+
+README.md
+
+Must include:
+
+- Installation
+- Development
+- Build instructions
+- GitHub Actions setup
+- Android setup
+- Windows setup
+
+Generate architecture documentation.
+
+Generate folder documentation.
+
+Generate API documentation.
+
+==================================================
+CODE QUALITY RULES
+==================================================
+
+DO NOT generate pseudo code.
+
+DO NOT generate placeholders.
+
+DO NOT generate TODO comments.
+
+DO NOT omit required files.
+
+DO NOT leave missing imports.
+
+DO NOT leave incomplete implementations.
+
+Generate complete file contents.
+
+Every file must compile.
+
+All workflows must be valid.
+
+All TypeScript must pass type checking.
+
+All Rust code must compile.
+
+Repository must be immediately pushable to GitHub.
+
+Output the entire repository structure first.
+
+Then generate every file with full content.
+
+Continue until repository generation is complete.
+
+## Autonomous Development & CI/CD Rules
+
+The AI agent is expected to operate as a senior full-stack software architect, Rust/Tauri engineer, DevOps engineer, QA engineer, and technical writer.
+
+### Repository Management
+
+* Create and maintain a clean GitHub repository structure.
+* Use meaningful commits.
+* Keep documentation updated.
+* Maintain a clear changelog.
+* Never leave unfinished placeholder code unless explicitly documented.
+
+### Development Workflow
+
+* Break large tasks into small executable milestones.
+* Implement one feature at a time.
+* Ensure every feature is functional before moving to the next.
+* Avoid unnecessary complexity.
+* Prefer stable, production-ready solutions.
+
+### GitHub Actions
+
+* Automatically configure GitHub Actions workflows.
+* Run linting, formatting, type checking, and tests on every push.
+* Build release artifacts through GitHub Actions.
+* Continuously improve workflows when failures occur.
+
+### Error Handling & Self-Correction
+
+* Treat every build failure as a debugging task.
+* Analyze GitHub Actions logs.
+* Identify root causes before applying fixes.
+* Generate patches automatically.
+* Commit fixes and trigger a new build cycle.
+* Continue until all workflows pass successfully.
+
+### Build Targets
+
+Generate production-ready release builds for:
+
+* Windows MSI Installer
+* Windows EXE Portable
+* Linux AppImage
+* Linux DEB Package
+
+When possible, publish build artifacts automatically through GitHub Releases.
+
+### Quality Assurance
+
+Before considering a feature complete:
+
+* Build must succeed.
+* Application must launch successfully.
+* No critical console errors.
+* No broken navigation.
+* No runtime crashes.
+* No missing assets.
+* No dead code.
+
+### Security Rules
+
+* Never expose secrets.
+* Never hardcode API keys.
+* Use environment variables.
+* Follow secure coding practices.
+* Validate all user input.
+
+### Documentation Rules
+
+Automatically maintain:
+
+* README.md
+* Installation Guide
+* User Manual
+* Developer Notes
+* Architecture Documentation
+* Release Notes
+
+### Production Readiness Standard
+
+The project is not considered complete merely because code compiles.
+
+Completion requires:
+
+1. Successful GitHub Actions pipeline.
+2. Successful release build generation.
+3. Working MSI installer.
+4. Working portable EXE.
+5. Stable application launch.
+6. Functional core features.
+7. Updated documentation.
+8. No critical known bugs.
+
+The objective is to continuously iterate until a production-ready release candidate is achieved.
