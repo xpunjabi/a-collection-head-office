@@ -11,36 +11,26 @@ pub struct AiResponse {
     pub action_data: Option<serde_json::Value>,
 }
 
-pub async fn ask_ai(conn: &Connection, prompt: &str) -> Result<AiResponse, String> {
-    // 1. Detect if the prompt asks for a local database action
-    if let Some(local_action) = parse_local_intent(conn, prompt) {
-        return Ok(local_action);
+pub fn try_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
+    parse_local_intent(conn, prompt)
+}
+
+pub fn get_ai_config(conn: &Connection) -> Result<(String, String, String), String> {
+    get_ai_settings(conn)
+}
+
+pub fn log_request(conn: &Connection, prompt: &str, response: &str, provider: &str) -> Result<(), String> {
+    log_ai_request(conn, prompt, response, provider)
+}
+
+pub async fn call_ai_provider(provider: &str, api_key: &str, model: &str, prompt: &str) -> Result<String, String> {
+    match provider {
+        "gemini" => call_gemini(api_key, model, prompt).await,
+        "openai" => call_openai(api_key, model, prompt).await,
+        "claude" => call_claude(api_key, model, prompt).await,
+        "local" => call_local_llm(model, prompt).await,
+        _ => Err(format!("Unsupported AI provider: {}", provider)),
     }
-
-    // 2. Fetch AI settings from database
-    let (provider, api_key, model) = get_ai_settings(conn)?;
-
-    if api_key.is_empty() && provider != "local" {
-        return Err("AI API key is missing. Please configure it in the Settings module.".to_string());
-    }
-
-    // 3. Make LLM API request
-    let response_text = match provider.as_str() {
-        "gemini" => call_gemini(&api_key, &model, prompt).await?,
-        "openai" => call_openai(&api_key, &model, prompt).await?,
-        "claude" => call_claude(&api_key, &model, prompt).await?,
-        "local" => call_local_llm(&model, prompt).await?,
-        _ => return Err(format!("Unsupported AI provider: {}", provider)),
-    };
-
-    // Log the request and response in database
-    log_ai_request(conn, prompt, &response_text, &provider)?;
-
-    Ok(AiResponse {
-        text: response_text,
-        detected_action: None,
-        action_data: None,
-    })
 }
 
 fn get_ai_settings(conn: &Connection) -> Result<(String, String, String), String> {

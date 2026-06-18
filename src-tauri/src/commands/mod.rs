@@ -183,8 +183,40 @@ pub async fn get_customer_report(state: State<'_, DbState>) -> Result<CustomerSu
 
 #[tauri::command]
 pub async fn ask_ai(state: State<'_, DbState>, prompt: String) -> Result<AiResponse, String> {
-    let conn = state.0.lock().unwrap();
-    ai::ask_ai(&conn, &prompt).await
+    // Phase 1: Check local intents (sync, no async work needed)
+    // We must drop the connection lock before any .await to avoid Send issues.
+    let local_result = {
+        let conn = state.0.lock().unwrap();
+        ai::try_local_intent(&conn, &prompt)
+    };
+    if let Some(response) = local_result {
+        return Ok(response);
+    }
+
+    // Phase 2: Get AI config synchronously
+    let (provider, api_key, model) = {
+        let conn = state.0.lock().unwrap();
+        ai::get_ai_config(&conn)?
+    };
+
+    if api_key.is_empty() && provider != "local" {
+        return Err("AI API key is missing. Please configure it in the Settings module.".to_string());
+    }
+
+    // Phase 3: Call AI provider (async, no connection held)
+    let response_text = ai::call_ai_provider(&provider, &api_key, &model, &prompt).await?;
+
+    // Phase 4: Log the request
+    {
+        let conn = state.0.lock().unwrap();
+        ai::log_request(&conn, &prompt, &response_text, &provider)?;
+    }
+
+    Ok(AiResponse {
+        text: response_text,
+        detected_action: None,
+        action_data: None,
+    })
 }
 
 // ==========================================
