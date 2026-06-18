@@ -23,13 +23,27 @@ pub fn log_request(conn: &Connection, prompt: &str, response: &str, provider: &s
     log_ai_request(conn, prompt, response, provider)
 }
 
+fn default_business_profile() -> &'static str {
+    r#"{"business_name":"A Collection","industry":"Ladies Clothing Retail","owner":"Ali","purchase_city":"Faisalabad","sales_areas":["Narowal","Shakargarh","Zafarwal","Nearby Villages"],"sales_channels":["Facebook","WhatsApp","Door To Door"],"target_customers":{"gender":"Female","income_group":"Middle Income","preferred_products":["3 Piece Suits","Lawn","Cotton","Printed Designs","Embroidery"]},"business_goals":["Increase Profit","Increase Sales","Reduce Dead Stock","Improve Customer Retention","Improve Marketing"],"assistant_roles":["Inventory Manager","Sales Analyst","Marketing Assistant","Business Advisor","Purchase Planner"]}"#
+}
+
 pub fn get_business_profile(conn: &Connection) -> Result<serde_json::Value, String> {
     let val = conn.query_row(
         "SELECT value FROM settings WHERE key = 'business_profile'",
         [],
         |row| row.get::<_, String>(0),
-    ).map_err(|e| e.to_string())?;
-    serde_json::from_str(&val).map_err(|e| e.to_string())
+    );
+    match val {
+        Ok(v) => serde_json::from_str(&v).map_err(|e| e.to_string()),
+        Err(_) => {
+            let default = default_business_profile();
+            conn.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES ('business_profile', ?1)",
+                [default],
+            ).map_err(|e| e.to_string())?;
+            serde_json::from_str(default).map_err(|e| e.to_string())
+        }
+    }
 }
 
 pub fn build_business_context(conn: &Connection) -> Result<String, String> {

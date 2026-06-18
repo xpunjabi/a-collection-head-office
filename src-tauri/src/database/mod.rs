@@ -154,7 +154,24 @@ fn run_migrations(conn: &mut Connection) -> Result<()> {
     )?;
 
     seed_initial_data(conn)?;
+    ensure_business_profile(conn)?;
 
+    Ok(())
+}
+
+fn ensure_business_profile(conn: &Connection) -> Result<()> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM settings WHERE key = 'business_profile'",
+        [],
+        |row| row.get(0),
+    ).unwrap_or(0);
+    if count == 0 {
+        let profile = r#"{"business_name":"A Collection","industry":"Ladies Clothing Retail","owner":"Ali","purchase_city":"Faisalabad","sales_areas":["Narowal","Shakargarh","Zafarwal","Nearby Villages"],"sales_channels":["Facebook","WhatsApp","Door To Door"],"target_customers":{"gender":"Female","income_group":"Middle Income","preferred_products":["3 Piece Suits","Lawn","Cotton","Printed Designs","Embroidery"]},"business_goals":["Increase Profit","Increase Sales","Reduce Dead Stock","Improve Customer Retention","Improve Marketing"],"assistant_roles":["Inventory Manager","Sales Analyst","Marketing Assistant","Business Advisor","Purchase Planner"]}"#;
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('business_profile', ?1)",
+            [profile],
+        )?;
+    }
     Ok(())
 }
 
