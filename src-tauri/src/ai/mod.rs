@@ -285,15 +285,19 @@ pub fn parse_draft_from_response(text: &str) -> Option<DraftResponse> {
     serde_json::from_str::<DraftResponse>(&json_str).ok()
 }
 
-pub async fn generate_marketing(conn: &Connection, product_id: i64) -> Result<Vec<MarketingContent>, String> {
+pub fn prepare_marketing_data(conn: &Connection, product_id: i64) -> Result<(crate::catalog::Product, String, String, String), String> {
     let profile = get_business_profile(conn).unwrap_or_default();
     let has_fb = profile["sales_channels"].as_array().map(|a| a.iter().any(|v| v.as_str().unwrap_or("").to_lowercase().contains("facebook"))).unwrap_or(false);
     let has_wa = profile["sales_channels"].as_array().map(|a| a.iter().any(|v| v.as_str().unwrap_or("").to_lowercase().contains("whatsapp"))).unwrap_or(false);
 
-    let product: crate::catalog::Product = crate::catalog::get_product_by_id(conn, product_id).map_err(|e| e.to_string())?;
-    let product_json = serde_json::to_string(&product).map_err(|e| e.to_string())?;
+    let product = crate::catalog::get_product_by_id(conn, product_id).map_err(|e| e.to_string())?;
+    let (provider, api_key, model) = get_ai_settings(conn)?;
+    Ok((product, provider, api_key, model))
+}
 
-    let prompt = format!(
+pub fn build_marketing_prompt(product: &crate::catalog::Product, has_fb: bool, has_wa: bool) -> String {
+    let product_json = serde_json::to_string(product).unwrap_or_default();
+    format!(
         "Generate social media marketing content for the following product in our clothing business 'A Collection' (Faisalabad, Narowal, Shakargarh, Zafarwal). 
 Currency: PKR. Write in attractive Roman Urdu or English.
 
@@ -316,11 +320,12 @@ ONLY return the JSON array. No other text.",
         product_json,
         if has_fb { "facebook\n" } else { "" },
         if has_wa { "whatsapp (status + channel)\n" } else { "" }
-    );
+    )
+}
 
-    let (provider, api_key, model) = get_ai_settings(conn)?;
+pub async fn generate_marketing_content(provider: &str, api_key: &str, model: &str, prompt: &str) -> Result<Vec<MarketingContent>, String> {
     let sys_prompt = "You are a social media marketing assistant for a Pakistani clothing business. Generate engaging posts in Roman Urdu or English.";
-    let response = call_ai_provider(&provider, &api_key, &model, sys_prompt, &prompt, None).await?;
+    let response = call_ai_provider(provider, api_key, model, sys_prompt, prompt, None).await?;
 
     let body = response.trim();
     let json_str = if body.starts_with("```") {
