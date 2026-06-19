@@ -5,3 +5,8 @@ src-tauri/target/
 Thumbs.db
 *.log
 release-artifacts/
+
+# Generated installer
+*.exe
+# Logo source
+logo image/
