@@ -65,9 +65,12 @@ function App() {
     <div className="h-screen flex overflow-hidden bg-[#030712]">
       {/* Sidebar */}
       <aside className="w-56 bg-slate-900/60 border-r border-gray-800/60 flex flex-col shrink-0">
-        <div className="p-4 border-b border-gray-800/60">
-          <h1 className="text-lg font-bold text-white font-display tracking-tight">A Collection</h1>
-          <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">Head Office</p>
+        <div className="p-3 border-b border-gray-800/60 flex items-center space-x-3">
+          <img src="/logo.png" alt="A Collection" className="w-9 h-9 rounded-lg object-cover ring-1 ring-violet-500/20" />
+          <div>
+            <h1 className="text-sm font-bold text-white font-display tracking-tight">A Collection</h1>
+            <p className="text-[9px] text-gray-500 uppercase tracking-wider">Head Office</p>
+          </div>
         </div>
         <nav className="flex-1 overflow-y-auto p-2 space-y-1">
           {tabs.map((tab) => {
