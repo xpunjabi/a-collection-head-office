@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useEffect } from 'react'
 import { useAppStore } from '../stores/store'
 import ProductDraftCard from './ProductDraftCard'
 import {
-  MessageSquare, Send, X, Plus, Image, Link2, FileText, Upload,
+  Send, X, Plus, Image, Link2, FileText, Upload,
   Trash2, GripVertical, Sparkles
 } from 'lucide-react'
 
@@ -183,7 +183,6 @@ export default function AiWorkspace() {
                   draft={msg.product_draft}
                   confidence={msg.confidence}
                   missingFields={msg.missing_fields || []}
-                  suggestedActions={msg.suggested_actions || []}
                   index={activeDrafts.findIndex(d => d.draft === msg.product_draft)}
                 />
               </div>

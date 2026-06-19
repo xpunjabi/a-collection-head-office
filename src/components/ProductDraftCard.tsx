@@ -6,12 +6,11 @@ interface Props {
   draft: ProductDraft
   confidence: number
   missingFields: string[]
-  suggestedActions: string[]
   index: number
 }
 
-export default function ProductDraftCard({ draft: initialDraft, confidence, missingFields, suggestedActions, index }: Props) {
-  const { updateAiProductDraft, removeAiProductDraft, addDraftToCatalog, fetchProducts } = useAppStore()
+export default function ProductDraftCard({ draft: initialDraft, confidence, missingFields, index }: Props) {
+  const { updateAiProductDraft, removeAiProductDraft, addDraftToCatalog } = useAppStore()
   const [draft, setDraft] = useState<ProductDraft>(initialDraft)
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
