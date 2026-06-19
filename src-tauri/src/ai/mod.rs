@@ -285,14 +285,13 @@ pub fn parse_draft_from_response(text: &str) -> Option<DraftResponse> {
     serde_json::from_str::<DraftResponse>(&json_str).ok()
 }
 
-pub fn prepare_marketing_data(conn: &Connection, product_id: i64) -> Result<(crate::catalog::Product, String, String, String), String> {
+pub fn prepare_marketing_data(conn: &Connection, product_id: i64) -> Result<(crate::catalog::Product, String, String, String, bool, bool), String> {
     let profile = get_business_profile(conn).unwrap_or_default();
     let has_fb = profile["sales_channels"].as_array().map(|a| a.iter().any(|v| v.as_str().unwrap_or("").to_lowercase().contains("facebook"))).unwrap_or(false);
     let has_wa = profile["sales_channels"].as_array().map(|a| a.iter().any(|v| v.as_str().unwrap_or("").to_lowercase().contains("whatsapp"))).unwrap_or(false);
-
     let product = crate::catalog::get_product_by_id(conn, product_id).map_err(|e| e.to_string())?;
     let (provider, api_key, model) = get_ai_settings(conn)?;
-    Ok((product, provider, api_key, model))
+    Ok((product, provider, api_key, model, has_fb, has_wa))
 }
 
 pub fn build_marketing_prompt(product: &crate::catalog::Product, has_fb: bool, has_wa: bool) -> String {

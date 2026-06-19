@@ -277,13 +277,10 @@ pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai:
 
 #[tauri::command]
 pub async fn generate_marketing(state: State<'_, DbState>, product_id: i64) -> Result<Vec<ai::MarketingContent>, String> {
-    let (product, provider, api_key, model) = {
+    let (product, provider, api_key, model, has_fb, has_wa) = {
         let conn = state.0.lock().unwrap();
         ai::prepare_marketing_data(&conn, product_id)?
     };
-    let profile = ai::get_business_profile(&state.0.lock().unwrap()).unwrap_or_default();
-    let has_fb = profile["sales_channels"].as_array().map(|a| a.iter().any(|v| v.as_str().unwrap_or("").to_lowercase().contains("facebook"))).unwrap_or(false);
-    let has_wa = profile["sales_channels"].as_array().map(|a| a.iter().any(|v| v.as_str().unwrap_or("").to_lowercase().contains("whatsapp"))).unwrap_or(false);
     let prompt = ai::build_marketing_prompt(&product, has_fb, has_wa);
     let posts = ai::generate_marketing_content(&provider, &api_key, &model, &prompt).await?;
     let now = chrono::Utc::now().to_rfc3339();
