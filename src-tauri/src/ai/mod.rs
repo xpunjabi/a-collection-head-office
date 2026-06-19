@@ -62,6 +62,10 @@ pub fn log_request(conn: &Connection, prompt: &str, response: &str, provider: &s
     log_ai_request(conn, prompt, response, provider)
 }
 
+fn default_business_profile() -> &'static str {
+    r#"{"business_name":"A Collection","industry":"Ladies Clothing Retail","owner":"Ali","purchase_city":"Faisalabad","sales_areas":["Narowal","Shakargarh","Zafarwal","Nearby Villages"],"sales_channels":["Facebook","WhatsApp","Door To Door"],"target_customers":{"gender":"Female","income_group":"Middle Income","preferred_products":["3 Piece Suits","Lawn","Cotton","Printed Designs","Embroidery"]},"business_goals":["Increase Profit","Increase Sales","Reduce Dead Stock","Improve Customer Retention","Improve Marketing"],"assistant_roles":["Inventory Manager","Sales Analyst","Marketing Assistant","Business Advisor","Purchase Planner"]}"#
+}
+
 pub fn get_business_profile(conn: &Connection) -> Result<serde_json::Value, String> {
     let val = conn.query_row(
         "SELECT value FROM settings WHERE key = 'business_profile'",
@@ -391,6 +395,10 @@ fn parse_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
                     text,
                     detected_action: Some("low_stock".to_string()),
                     action_data: Some(json!(items)),
+                    product_draft: None,
+                    confidence: None,
+                    missing_fields: None,
+                    suggested_actions: None,
                 });
             }
         }
@@ -421,6 +429,10 @@ fn parse_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
                                 text,
                                 detected_action: Some("product_detail".to_string()),
                                 action_data: Some(json!({ "sku": sku, "name": name, "price": price, "stock": qty })),
+                                product_draft: None,
+                                confidence: None,
+                                missing_fields: None,
+                                suggested_actions: None,
                             });
                         }
                     }
