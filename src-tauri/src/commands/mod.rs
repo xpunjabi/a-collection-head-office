@@ -206,7 +206,7 @@ pub async fn get_customer_report(state: State<'_, DbState>) -> Result<CustomerSu
 // ==================== AI ====================
 
 #[tauri::command]
-pub async fn ask_ai(state: State<'_, DbState>, prompt: String) -> Result<AiResponse, String> {
+pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Option<String>) -> Result<AiResponse, String> {
     let local_result = {
         let conn = state.0.lock().unwrap();
         ai::try_local_intent(&conn, &prompt)
@@ -221,17 +221,72 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String) -> Result<AiRespo
         return Err("AI API key is missing. Please configure it in Settings.".to_string());
     }
 
-    let (system_prompt, _) = {
+    let system_prompt = {
         let conn = state.0.lock().unwrap();
-        (ai::build_system_prompt(&conn, &prompt)?, ())
+        let mut sp = ai::build_system_prompt(&conn, &prompt)?;
+        sp.push_str("\n\n## Product Intake Mode\n\nWhen the user shares a product image, link, code, or description, you MUST:\n1. Analyze all available information\n2. If product information is detected, return a JSON block at the end of your response:\n\n```json\n{\n  \"draft\": {\n    \"name\": \"...\",\n    \"sku\": \"...\",\n    \"category\": \"...\",\n    \"brand\": \"...\",\n    \"fabric\": \"...\",\n    \"color\": \"...\",\n    \"design\": \"...\",\n    \"season\": \"...\",\n    \"cost_price\": 0.0,\n    \"sale_price\": 0.0,\n    \"retail_price\": 0.0,\n    \"description\": \"...\",\n    \"tags\": [\"...\"],\n    \"keywords\": [\"...\"],\n    \"hashtags\": [\"...\"]\n  },\n  \"confidence\": 0.85,\n  \"missing_fields\": [\"stock_location\", \"purchase_cost\"],\n  \"suggested_actions\": [\"Add To Catalog\", \"Edit Draft\", \"Generate Marketing\"]\n}\n```\n\n3. If no product information is detected, respond normally as a business assistant.\n");
+        sp
     };
 
-    let response_text = ai::call_ai_provider(&provider, &api_key, &model, &system_prompt, &prompt).await?;
+    let response_text = ai::call_ai_provider(&provider, &api_key, &model, &system_prompt, &prompt, image_data.as_deref()).await?;
     {
         let conn = state.0.lock().unwrap();
         ai::log_request(&conn, &prompt, &response_text, &provider)?;
     }
-    Ok(AiResponse { text: response_text, detected_action: None, action_data: None })
+
+    let mut resp = AiResponse { text: response_text.clone(), detected_action: None, action_data: None, product_draft: None, confidence: None, missing_fields: None, suggested_actions: None };
+
+    if let Some(draft_resp) = ai::parse_draft_from_response(&response_text) {
+        resp.product_draft = Some(draft_resp.draft);
+        resp.confidence = Some(draft_resp.confidence);
+        resp.missing_fields = Some(draft_resp.missing_fields);
+        resp.suggested_actions = Some(draft_resp.suggested_actions);
+        resp.detected_action = Some("product_draft".to_string());
+    }
+
+    Ok(resp)
+}
+
+#[tauri::command]
+pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai::ProductDraft) -> Result<i64, String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let product = crate::catalog::Product {
+        id: None,
+        sku: draft.sku.clone().unwrap_or_default(),
+        name: draft.name.clone().unwrap_or_else(|| "New Product".to_string()),
+        category: draft.category.clone(),
+        color: draft.color.clone(),
+        design: draft.design.clone(),
+        season: draft.season.clone(),
+        cost_price: draft.cost_price.unwrap_or(0.0),
+        sale_price: draft.sale_price.unwrap_or(0.0),
+        purchase_price: draft.retail_price.unwrap_or(0.0),
+        description: draft.description.clone(),
+        tags: draft.tags.clone().map(|t| t.join(", ")),
+        stock_quantity: 0,
+        status: "active".to_string(),
+        images: draft.images.clone().map(|i| i.join(",")).unwrap_or_default(),
+        supplier_id: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let conn = state.0.lock().unwrap();
+    let id = crate::catalog::add_product(&conn, &product).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn generate_marketing(state: State<'_, DbState>, product_id: i64) -> Result<Vec<ai::MarketingContent>, String> {
+    let conn = state.0.lock().unwrap();
+    let posts = ai::generate_marketing(&conn, product_id).await?;
+    let now = chrono::Utc::now().to_rfc3339();
+    for post in &posts {
+        conn.execute(
+            "INSERT INTO social_posts (product_id, platform, content, caption_type, status, created_at) VALUES (?1, ?2, ?3, ?4, 'draft', ?5)",
+            rusqlite::params![product_id, post.platform, post.content, post.caption_type, &now],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(posts)
 }
 
 #[tauri::command]

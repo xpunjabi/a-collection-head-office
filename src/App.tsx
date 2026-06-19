@@ -10,9 +10,8 @@ import {
   Settings as SettingsIcon,
   MapPin,
   ChevronLeft,
-  MessageSquare,
-  Send,
-  X
+  Sparkles,
+  MessageSquare
 } from 'lucide-react'
 
 import Dashboard from './pages/Dashboard'
@@ -24,6 +23,7 @@ import Automation from './pages/Automation'
 import Reports from './pages/Reports'
 import SettingsPage from './pages/Settings'
 import LocationsPage from './pages/Locations'
+import AiWorkspace from './components/AiWorkspace'
 
 const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -43,9 +43,7 @@ function App() {
     setCurrentTab,
     showAiAssistant,
     setVectorAssistant,
-    aiMessages,
-    isAiLoading,
-    sendAiMessage
+    aiProductDrafts,
   } = useAppStore()
 
   const renderPage = () => {
@@ -60,16 +58,6 @@ function App() {
       case 'reports': return <Reports />
       case 'settings': return <SettingsPage />
       default: return <Dashboard />
-    }
-  }
-
-  const handleAiSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    const form = e.currentTarget
-    const input = form.elements.namedItem('ai-input') as HTMLInputElement
-    if (input.value.trim()) {
-      sendAiMessage(input.value.trim())
-      input.value = ''
     }
   }
 
@@ -100,17 +88,33 @@ function App() {
             )
           })}
         </nav>
-        <div className="p-3 border-t border-gray-800/60">
+        <div className="p-3 border-t border-gray-800/60 space-y-2">
           <button
             onClick={() => setVectorAssistant(!showAiAssistant)}
             className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs bg-violet-600/10 text-violet-400 border border-violet-500/10 hover:bg-violet-600/20 transition-colors"
           >
             <span className="flex items-center space-x-1.5">
-              <MessageSquare size={14} />
-              <span>AI Assistant</span>
+              <Sparkles size={14} />
+              <span>AI Workspace</span>
             </span>
-            <ChevronLeft size={14} className={`transition-transform ${showAiAssistant ? 'rotate-180' : ''}`} />
+            <div className="flex items-center space-x-1">
+              {aiProductDrafts.length > 0 && (
+                <span className="bg-violet-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center font-bold">
+                  {aiProductDrafts.length}
+                </span>
+              )}
+              <ChevronLeft size={14} className={`transition-transform ${showAiAssistant ? 'rotate-180' : ''}`} />
+            </div>
           </button>
+          {!showAiAssistant && (
+            <button
+              onClick={() => setVectorAssistant(true)}
+              className="w-full flex items-center space-x-2 px-3 py-2 rounded-lg text-xs text-gray-500 hover:text-gray-300 hover:bg-slate-800/50 transition-colors"
+            >
+              <MessageSquare size={12} />
+              <span>Open AI Workspace</span>
+            </button>
+          )}
         </div>
       </aside>
 
@@ -119,68 +123,8 @@ function App() {
         {renderPage()}
       </main>
 
-      {/* AI Assistant Panel */}
-      {showAiAssistant && (
-        <aside className="w-80 bg-slate-900/60 border-l border-gray-800/60 flex flex-col shrink-0">
-          <div className="flex items-center justify-between p-4 border-b border-gray-800/60">
-            <h2 className="text-sm font-semibold text-white flex items-center space-x-2">
-              <MessageSquare size={16} className="text-violet-500" />
-              <span>AI Assistant</span>
-            </h2>
-            <button
-              onClick={() => setVectorAssistant(false)}
-              className="text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {aiMessages.map((msg, i) => (
-              <div
-                key={i}
-                className={`text-sm ${msg.role === 'user' ? 'text-right' : 'text-left'}`}
-              >
-                <span
-                  className={`inline-block px-3 py-2 rounded-xl max-w-[90%] ${
-                    msg.role === 'user'
-                      ? 'bg-violet-600/20 text-violet-200 border border-violet-500/10'
-                      : 'bg-slate-800/60 text-gray-300 border border-gray-800'
-                  }`}
-                >
-                  <span className="text-[10px] block text-gray-500 mb-1">
-                    {msg.role === 'user' ? 'You' : 'AI'}
-                  </span>
-                  <span className="whitespace-pre-wrap">{msg.text}</span>
-                </span>
-              </div>
-            ))}
-            {isAiLoading && (
-              <div className="text-left text-sm">
-                <span className="inline-block px-3 py-2 rounded-xl bg-slate-800/60 text-gray-400 border border-gray-800">
-                  Thinking...
-                </span>
-              </div>
-            )}
-          </div>
-
-          <form onSubmit={handleAiSubmit} className="p-3 border-t border-gray-800/60 flex space-x-2">
-            <input
-              name="ai-input"
-              type="text"
-              placeholder="Ask AI anything..."
-              className="flex-1 bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-violet-500"
-            />
-            <button
-              type="submit"
-              disabled={isAiLoading}
-              className="p-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors disabled:opacity-50"
-            >
-              <Send size={16} />
-            </button>
-          </form>
-        </aside>
-      )}
+      {/* AI Workspace */}
+      <AiWorkspace />
     </div>
   )
 }

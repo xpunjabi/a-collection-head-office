@@ -51,10 +51,49 @@ export interface OrderHistory {
   items: OrderItemDetail[];
 }
 
+export interface ProductDraft {
+  name?: string;
+  sku?: string;
+  category?: string;
+  brand?: string;
+  fabric?: string;
+  color?: string;
+  design?: string;
+  season?: string;
+  cost_price?: number;
+  sale_price?: number;
+  retail_price?: number;
+  description?: string;
+  tags?: string[];
+  keywords?: string[];
+  hashtags?: string[];
+  images?: string[];
+}
+
 export interface AiResponse {
   text: string;
   detected_action?: string;
   action_data?: any;
+  product_draft?: ProductDraft;
+  confidence?: number;
+  missing_fields?: string[];
+  suggested_actions?: string[];
+}
+
+export interface MarketingContent {
+  platform: string;
+  content: string;
+  caption_type: string;
+}
+
+export interface WorkspaceAsset {
+  id: string;
+  name: string;
+  path?: string;
+  data?: string;
+  mime: string;
+  type: 'image' | 'document' | 'link';
+  source_url?: string;
 }
 
 interface AppState {
@@ -63,6 +102,8 @@ interface AppState {
   setCurrentTab: (tab: string) => void;
   showAiAssistant: boolean;
   setVectorAssistant: (show: boolean) => void;
+  aiWorkspaceWidth: number;
+  setAiWorkspaceWidth: (width: number) => void;
 
   // Products
   products: Product[];
@@ -97,10 +138,24 @@ interface AppState {
   updateSetting: (key: string, value: string) => Promise<void>;
   backupDatabaseNow: () => Promise<string>;
 
+  // AI Product Drafts
+  aiProductDrafts: { draft: ProductDraft; confidence: number; missingFields: string[]; suggestedActions: string[] }[];
+  addAiProductDraft: (draft: ProductDraft, confidence: number, missingFields: string[], suggestedActions: string[]) => void;
+  removeAiProductDraft: (index: number) => void;
+  updateAiProductDraft: (index: number, draft: ProductDraft) => void;
+  addDraftToCatalog: (draft: ProductDraft) => Promise<number>;
+  marketingForProduct: (productId: number) => Promise<void>;
+
+  // Workspace assets
+  workspaceAssets: WorkspaceAsset[];
+  addWorkspaceAsset: (asset: WorkspaceAsset) => void;
+  removeWorkspaceAsset: (id: string) => void;
+  clearWorkspaceAssets: () => void;
+
   // AI Assistant Chat
-  aiMessages: { role: 'user' | 'assistant'; text: string; action?: string }[];
+  aiMessages: { role: 'user' | 'assistant'; text: string; action?: string; product_draft?: ProductDraft; confidence?: number; missing_fields?: string[]; suggested_actions?: string[] }[];
   isAiLoading: boolean;
-  sendAiMessage: (prompt: string) => Promise<void>;
+  sendAiMessage: (prompt: string, imageData?: string) => Promise<void>;
   clearAiChat: () => void;
 }
 
@@ -110,6 +165,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCurrentTab: (tab) => set({ currentTab: tab }),
   showAiAssistant: true,
   setVectorAssistant: (show) => set({ showAiAssistant: show }),
+  aiWorkspaceWidth: 35,
+  setAiWorkspaceWidth: (width) => set({ aiWorkspaceWidth: width }),
 
   // Products
   products: [],
@@ -274,40 +331,94 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  // AI Product Drafts
+  aiProductDrafts: [],
+  addAiProductDraft: (draft, confidence, missingFields, suggestedActions) => set((state) => ({
+    aiProductDrafts: [...state.aiProductDrafts, { draft, confidence, missingFields, suggestedActions }],
+  })),
+  removeAiProductDraft: (index) => set((state) => ({
+    aiProductDrafts: state.aiProductDrafts.filter((_, i) => i !== index),
+  })),
+  updateAiProductDraft: (index, draft) => set((state) => ({
+    aiProductDrafts: state.aiProductDrafts.map((d, i) => i === index ? { ...d, draft } : d),
+  })),
+  addDraftToCatalog: async (draft) => {
+    try {
+      const id: number = await invoke('save_product_draft_to_catalog', { draft });
+      await get().fetchProducts();
+      // Auto-generate marketing content
+      try {
+        await get().marketingForProduct(id);
+      } catch {}
+      return id;
+    } catch (err) {
+      throw new Error(String(err));
+    }
+  },
+  marketingForProduct: async (productId) => {
+    try {
+      await invoke<MarketingContent[]>('generate_marketing', { productId });
+    } catch (err) {
+      console.error('Marketing generation failed:', err);
+    }
+  },
+
+  // Workspace assets
+  workspaceAssets: [],
+  addWorkspaceAsset: (asset) => set((state) => ({
+    workspaceAssets: [...state.workspaceAssets, asset],
+  })),
+  removeWorkspaceAsset: (id) => set((state) => ({
+    workspaceAssets: state.workspaceAssets.filter((a) => a.id !== id),
+  })),
+  clearWorkspaceAssets: () => set({ workspaceAssets: [] }),
+
   // AI Assistant Chat
   aiMessages: [
     {
       role: 'assistant',
-      text: 'Hello! I am your AI Business Assistant. How can I help you manage your clothing shop today? Ask me to: \n- "Show low stock items"\n- "Generate Facebook post for product"\n- "Suggest promotional campaigns"',
+      text: '👋 Hello! I am your AI Business Assistant.\n\nI can help you with:\n• **Product Intake** — Drop an image, link, or paste product code\n• **Catalog Management** — Create and edit product drafts\n• **Marketing Content** — Generate posts for Facebook, WhatsApp, Instagram\n• **Inventory Insights** — Check stock, low items, dead stock\n• **Business Advice** — Purchasing decisions, sales analysis\n\nTry sending a product image or paste a product link!',
     },
   ],
   isAiLoading: false,
-  sendAiMessage: async (prompt) => {
-    if (!prompt.trim()) return;
+  sendAiMessage: async (prompt, imageData) => {
+    if (!prompt.trim() && !imageData) return;
 
     // Add user message to chat
+    const userMsg: any = { role: 'user', text: prompt || (imageData ? '[Image uploaded]' : '') };
     set((state) => ({
-      aiMessages: [...state.aiMessages, { role: 'user', text: prompt }],
+      aiMessages: [...state.aiMessages, userMsg],
       isAiLoading: true,
     }));
 
     try {
-      const response: AiResponse = await invoke('ask_ai', { prompt });
+      const response: AiResponse = await invoke('ask_ai', { prompt, imageData: imageData || null });
 
-      // Add assistant response
+      const assistantMsg: any = {
+        role: 'assistant',
+        text: response.text,
+        action: response.detected_action,
+        product_draft: response.product_draft,
+        confidence: response.confidence,
+        missing_fields: response.missing_fields,
+        suggested_actions: response.suggested_actions,
+      };
+
       set((state) => ({
-        aiMessages: [
-          ...state.aiMessages,
-          {
-            role: 'assistant',
-            text: response.text,
-            action: response.detected_action,
-          },
-        ],
+        aiMessages: [...state.aiMessages, assistantMsg],
         isAiLoading: false,
       }));
 
-      // If a local action occurred that modified data or requires data reload, trigger refreshes
+      // Add draft to drafts store if detected
+      if (response.product_draft && response.confidence) {
+        get().addAiProductDraft(
+          response.product_draft,
+          response.confidence,
+          response.missing_fields || [],
+          response.suggested_actions || []
+        );
+      }
+
       if (response.detected_action === 'low_stock') {
         await get().fetchProducts();
       }
@@ -329,7 +440,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       aiMessages: [
         {
           role: 'assistant',
-          text: 'Chat history cleared. How can I help you now?',
+          text: 'Chat history cleared. I\'m ready to help with product intake, marketing, or business questions.',
         },
       ],
     }),

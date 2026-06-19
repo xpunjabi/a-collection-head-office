@@ -9,6 +9,45 @@ pub struct AiResponse {
     pub text: String,
     pub detected_action: Option<String>,
     pub action_data: Option<serde_json::Value>,
+    pub product_draft: Option<ProductDraft>,
+    pub confidence: Option<f64>,
+    pub missing_fields: Option<Vec<String>>,
+    pub suggested_actions: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ProductDraft {
+    pub name: Option<String>,
+    pub sku: Option<String>,
+    pub category: Option<String>,
+    pub brand: Option<String>,
+    pub fabric: Option<String>,
+    pub color: Option<String>,
+    pub design: Option<String>,
+    pub season: Option<String>,
+    pub cost_price: Option<f64>,
+    pub sale_price: Option<f64>,
+    pub retail_price: Option<f64>,
+    pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub keywords: Option<Vec<String>>,
+    pub hashtags: Option<Vec<String>>,
+    pub images: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MarketingContent {
+    pub platform: String,
+    pub content: String,
+    pub caption_type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DraftResponse {
+    pub draft: ProductDraft,
+    pub confidence: f64,
+    pub missing_fields: Vec<String>,
+    pub suggested_actions: Vec<String>,
 }
 
 pub fn try_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
@@ -21,10 +60,6 @@ pub fn get_ai_config(conn: &Connection) -> Result<(String, String, String), Stri
 
 pub fn log_request(conn: &Connection, prompt: &str, response: &str, provider: &str) -> Result<(), String> {
     log_ai_request(conn, prompt, response, provider)
-}
-
-fn default_business_profile() -> &'static str {
-    r#"{"business_name":"A Collection","industry":"Ladies Clothing Retail","owner":"Ali","purchase_city":"Faisalabad","sales_areas":["Narowal","Shakargarh","Zafarwal","Nearby Villages"],"sales_channels":["Facebook","WhatsApp","Door To Door"],"target_customers":{"gender":"Female","income_group":"Middle Income","preferred_products":["3 Piece Suits","Lawn","Cotton","Printed Designs","Embroidery"]},"business_goals":["Increase Profit","Increase Sales","Reduce Dead Stock","Improve Customer Retention","Improve Marketing"],"assistant_roles":["Inventory Manager","Sales Analyst","Marketing Assistant","Business Advisor","Purchase Planner"]}"#
 }
 
 pub fn get_business_profile(conn: &Connection) -> Result<serde_json::Value, String> {
@@ -220,14 +255,82 @@ fn get_relevant_knowledge(conn: &Connection, prompt: &str) -> Result<Vec<Knowled
     Ok(result)
 }
 
-pub async fn call_ai_provider(provider: &str, api_key: &str, model: &str, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
+pub async fn call_ai_provider(provider: &str, api_key: &str, model: &str, system_prompt: &str, user_prompt: &str, image_data: Option<&str>) -> Result<String, String> {
     match provider {
-        "gemini" => call_gemini(api_key, model, system_prompt, user_prompt).await,
+        "gemini" => call_gemini(api_key, model, system_prompt, user_prompt, image_data).await,
         "openai" => call_openai(api_key, model, system_prompt, user_prompt).await,
         "claude" => call_claude(api_key, model, system_prompt, user_prompt).await,
         "local" => call_local_llm(model, system_prompt, user_prompt).await,
         _ => Err(format!("Unsupported AI provider: {}", provider)),
     }
+}
+
+pub fn parse_draft_from_response(text: &str) -> Option<DraftResponse> {
+    let body = text.trim();
+    if !body.starts_with('{') && !body.starts_with("```") {
+        return None;
+    }
+    let json_str = if body.starts_with("```") {
+        let lines: Vec<&str> = body.lines().collect();
+        let start = lines.iter().position(|l| l.contains("```json")).unwrap_or(0);
+        let end = lines.iter().skip(start + 1).position(|l| l.contains("```")).map(|p| start + 1 + p).unwrap_or(lines.len());
+        lines[start+1..end].join("\n")
+    } else {
+        body.to_string()
+    };
+    serde_json::from_str::<DraftResponse>(&json_str).ok()
+}
+
+pub async fn generate_marketing(conn: &Connection, product_id: i64) -> Result<Vec<MarketingContent>, String> {
+    let profile = get_business_profile(conn).unwrap_or_default();
+    let has_fb = profile["sales_channels"].as_array().map(|a| a.iter().any(|v| v.as_str().unwrap_or("").to_lowercase().contains("facebook"))).unwrap_or(false);
+    let has_wa = profile["sales_channels"].as_array().map(|a| a.iter().any(|v| v.as_str().unwrap_or("").to_lowercase().contains("whatsapp"))).unwrap_or(false);
+
+    let product: crate::catalog::Product = crate::catalog::get_product_by_id(conn, product_id).map_err(|e| e.to_string())?;
+    let product_json = serde_json::to_string(&product).map_err(|e| e.to_string())?;
+
+    let prompt = format!(
+        "Generate social media marketing content for the following product in our clothing business 'A Collection' (Faisalabad, Narowal, Shakargarh, Zafarwal). 
+Currency: PKR. Write in attractive Roman Urdu or English.
+
+Product Data:
+{}
+
+Generate content for the following platforms:
+{}{}
+
+Return as JSON array:
+[
+  {{\"platform\": \"facebook\", \"content\": \"...\", \"caption_type\": \"product_showcase\"}},
+  {{\"platform\": \"instagram\", \"content\": \"...\", \"caption_type\": \"product_showcase\"}},
+  {{\"platform\": \"tiktok\", \"content\": \"...\", \"caption_type\": \"product_showcase\"}},
+  {{\"platform\": \"whatsapp_status\", \"content\": \"...\", \"caption_type\": \"product_announcement\"}},
+  {{\"platform\": \"whatsapp_channel\", \"content\": \"...\", \"caption_type\": \"product_announcement\"}}
+]
+
+ONLY return the JSON array. No other text.",
+        product_json,
+        if has_fb { "facebook\n" } else { "" },
+        if has_wa { "whatsapp (status + channel)\n" } else { "" }
+    );
+
+    let (provider, api_key, model) = get_ai_settings(conn)?;
+    let sys_prompt = "You are a social media marketing assistant for a Pakistani clothing business. Generate engaging posts in Roman Urdu or English.";
+    let response = call_ai_provider(&provider, &api_key, &model, sys_prompt, &prompt, None).await?;
+
+    let body = response.trim();
+    let json_str = if body.starts_with("```") {
+        body.lines()
+            .skip_while(|l| !l.contains("```"))
+            .skip(1)
+            .take_while(|l| !l.contains("```"))
+            .collect::<Vec<&str>>()
+            .join("\n")
+    } else {
+        body.to_string()
+    };
+
+    serde_json::from_str::<Vec<MarketingContent>>(&json_str).map_err(|e| format!("Marketing parse error: {}", e))
 }
 
 fn get_ai_settings(conn: &Connection) -> Result<(String, String, String), String> {
@@ -329,9 +432,9 @@ fn parse_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
     None
 }
 
-async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
+async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str, image_data: Option<&str>) -> Result<String, String> {
     let client = Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(45))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -340,14 +443,29 @@ async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_promp
         model, api_key
     );
 
-    let payload = json!({
+    let mut parts = vec![json!({"text": user_prompt})];
+
+    if let Some(b64) = image_data {
+        parts.push(json!({
+            "inlineData": {
+                "mimeType": "image/jpeg",
+                "data": b64
+            }
+        }));
+    }
+
+    let mut payload = json!({
         "system_instruction": {
             "parts": [{"text": system_prompt}]
         },
         "contents": [{
-            "parts": [{"text": user_prompt}]
+            "parts": parts
         }]
     });
+
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("tools".to_string(), json!([{"googleSearch": {}}]));
+    }
 
     let res = client.post(&url)
         .json(&payload)

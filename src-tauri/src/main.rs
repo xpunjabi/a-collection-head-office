@@ -63,6 +63,8 @@ fn main() {
             commands::get_locations,
             commands::add_location,
             commands::update_location,
+            commands::save_product_draft_to_catalog,
+            commands::generate_marketing,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

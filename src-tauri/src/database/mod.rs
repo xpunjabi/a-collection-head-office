@@ -85,7 +85,39 @@ fn run_migrations(conn: &mut Connection) -> Result<()> {
         key TEXT PRIMARY KEY, value TEXT NOT NULL
     );", [])?;
 
-    // === NEW TABLES (v0.3.0) ===
+    // === NEW TABLES (v0.4.0 — AI Workspace) ===
+    conn.execute("CREATE TABLE IF NOT EXISTS product_drafts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_type TEXT NOT NULL DEFAULT 'manual',
+        source_data TEXT,
+        draft_data TEXT NOT NULL,
+        confidence REAL DEFAULT 0.0,
+        missing_fields TEXT DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );", [])?;
+
+    conn.execute("CREATE TABLE IF NOT EXISTS media_assets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        original_name TEXT NOT NULL,
+        stored_path TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        file_size INTEGER NOT NULL DEFAULT 0,
+        source_url TEXT,
+        analysis_result TEXT,
+        draft_id INTEGER,
+        product_id INTEGER,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(draft_id) REFERENCES product_drafts(id) ON DELETE SET NULL,
+        FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
+    );", [])?;
+
+    add_col_if_missing(conn, "social_posts", "caption_type", "TEXT DEFAULT 'general'")?;
+    add_col_if_missing(conn, "social_posts", "media_path", "TEXT")?;
+    add_col_if_missing(conn, "social_posts", "draft_id", "INTEGER")?;
+
+    // === OLD NEW TABLES (v0.3.0) ===
 
     conn.execute("CREATE TABLE IF NOT EXISTS locations (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
