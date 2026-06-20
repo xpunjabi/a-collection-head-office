@@ -2,6 +2,7 @@ use serde::{Serialize, Deserialize};
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::fs;
+use std::io::Cursor;
 use image::{ImageReader, imageops::FilterType};
 use csv::{ReaderBuilder, WriterBuilder};
 
@@ -216,6 +217,30 @@ pub fn process_and_save_image(src_path: &Path, app_images_dir: &Path, format_typ
     let file_name = format!("{}_{}.jpg", uuid_str, format_type);
     let dest_path = app_images_dir.join(&file_name);
     let img = ImageReader::open(src_path)?.decode()?;
+    let (width, height) = match format_type {
+        "instagram" => (1080, 1080),
+        "facebook" => (1200, 630),
+        "whatsapp" => (800, 800),
+        "thumbnail" => (200, 200),
+        _ => (1080, 1080),
+    };
+    let resized = if format_type == "thumbnail" {
+        img.resize_to_fill(width, height, FilterType::Lanczos3)
+    } else {
+        img.resize(width, height, FilterType::Lanczos3)
+    };
+    resized.save(&dest_path)?;
+    Ok(file_name)
+}
+
+pub fn process_and_save_image_bytes(img_bytes: &[u8], app_images_dir: &Path, format_type: &str) -> Result<String, Box<dyn std::error::Error>> {
+    fs::create_dir_all(app_images_dir)?;
+    let uuid_str = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0).to_string();
+    let file_name = format!("{}_{}.jpg", uuid_str, format_type);
+    let dest_path = app_images_dir.join(&file_name);
+    let img = ImageReader::new(Cursor::new(img_bytes))
+        .with_guessed_format()?
+        .decode()?;
     let (width, height) = match format_type {
         "instagram" => (1080, 1080),
         "facebook" => (1200, 630),

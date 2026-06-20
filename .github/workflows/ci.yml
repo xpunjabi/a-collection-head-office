@@ -20,8 +20,19 @@ jobs:
       - name: Install frontend deps
         run: npm install --no-audit --no-fund
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: TypeScript check
         run: npx tsc --noEmit
+
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
 
       - name: Vite build
         run: npm run build

@@ -394,6 +394,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const response: AiResponse = await invoke('ask_ai', { prompt, imageData: imageData || null });
 
+      // If we sent an image and got a product draft, save the image locally
+      if (imageData && response.product_draft) {
+        try {
+          const savedName = await invoke<string>('save_base64_image', {
+            base64Data: imageData,
+            formatType: 'thumbnail',
+          })
+          response.product_draft.images = [savedName]
+        } catch (err) {
+          console.error('Failed to save image from AI:', err)
+        }
+      }
+
       const assistantMsg: any = {
         role: 'assistant',
         text: response.text,

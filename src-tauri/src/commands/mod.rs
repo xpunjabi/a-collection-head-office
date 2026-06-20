@@ -93,6 +93,40 @@ pub async fn upload_product_image(src_path: String, format_type: String) -> Resu
     catalog::process_and_save_image(src, &images_dir, &format_type).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn get_image_as_base64(filename: String) -> Result<String, String> {
+    let images_dir = utils::get_images_dir();
+    let path = images_dir.join(&filename);
+    if !path.exists() {
+        return Err(format!("Image not found: {}", filename));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read image: {}", e))?;
+    let lower = filename.to_lowercase();
+    let mime = if lower.ends_with(".png") {
+        "image/png"
+    } else if lower.ends_with(".webp") {
+        "image/webp"
+    } else if lower.ends_with(".gif") {
+        "image/gif"
+    } else {
+        "image/jpeg"
+    };
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+#[tauri::command]
+pub async fn save_base64_image(base64_data: String, format_type: String) -> Result<String, String> {
+    use base64::Engine as _;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(&base64_data)
+        .map_err(|e| format!("Base64 decode error: {}", e))?;
+    let images_dir = utils::get_images_dir();
+    catalog::process_and_save_image_bytes(&raw, &images_dir, &format_type)
+        .map_err(|e| e.to_string())
+}
+
 // ==================== LOCATIONS ====================
 
 #[tauri::command]
@@ -265,7 +299,9 @@ pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai:
         tags: draft.tags.clone().map(|t| t.join(", ")),
         stock_quantity: 0,
         status: "active".to_string(),
-        images: draft.images.clone().map(|i| i.join(",")).unwrap_or_default(),
+        images: draft.images.clone()
+            .map(|i| serde_json::to_string(&i).unwrap_or_else(|_| "[]".to_string()))
+            .unwrap_or_else(|| "[]".to_string()),
         supplier_id: None,
         created_at: now.clone(),
         updated_at: now,

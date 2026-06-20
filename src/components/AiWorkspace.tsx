@@ -91,6 +91,29 @@ export default function AiWorkspace() {
     }
   }, [sendAiMessage])
 
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile()
+        if (file) {
+          e.preventDefault()
+          const reader = new FileReader()
+          reader.onload = (ev) => {
+            const base64 = (ev.target?.result as string)?.split(',')[1]
+            if (base64) {
+              sendAiMessage('[Pasted image]', base64)
+            }
+          }
+          reader.readAsDataURL(file)
+          return
+        }
+      }
+    }
+  }, [sendAiMessage])
+
   // Resize handler
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -131,6 +154,7 @@ export default function AiWorkspace() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onPaste={handlePaste}
     >
       {/* Resize Handle */}
       <div
@@ -251,7 +275,7 @@ export default function AiWorkspace() {
             type="text"
             value={inputText}
             onChange={e => setInputText(e.target.value)}
-            placeholder="Ask AI or drop product image/link..."
+            placeholder="Ask AI, paste image (Ctrl+V), or drop link..."
             className="flex-1 bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-violet-500"
           />
           <button

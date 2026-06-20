@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAppStore, ProductDraft } from '../stores/store'
 import { Check, X, Edit3, RefreshCw, Sparkles } from 'lucide-react'
+import ProductImage from './ProductImage'
 
 interface Props {
   draft: ProductDraft
@@ -108,6 +109,17 @@ export default function ProductDraftCard({ draft: initialDraft, confidence, miss
           </>
         ) : (
           <>
+            {/* Image preview */}
+            {draft.images && draft.images.length > 0 && (
+              <div className="flex -mx-3 -mt-3 mb-2 overflow-hidden rounded-t-xl">
+                <ProductImage
+                  filename={draft.images[0]}
+                  alt={draft.name || 'Product image'}
+                  className="w-full h-32 object-cover"
+                  iconSize={24}
+                />
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <span className="text-white font-medium text-sm">{draft.name || 'Unnamed Product'}</span>
               {draft.sku && <span className="text-[10px] font-mono text-gray-500">{draft.sku}</span>}

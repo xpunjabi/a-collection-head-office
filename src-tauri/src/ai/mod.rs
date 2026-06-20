@@ -448,6 +448,20 @@ fn parse_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
     None
 }
 
+fn detect_mime_type(b64: &str) -> &'static str {
+    if b64.starts_with("iVBORw0KGgo") {
+        "image/png"
+    } else if b64.starts_with("/9j/") {
+        "image/jpeg"
+    } else if b64.starts_with("UklGR") {
+        "image/webp"
+    } else if b64.starts_with("R0lGOD") {
+        "image/gif"
+    } else {
+        "image/jpeg"
+    }
+}
+
 async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str, image_data: Option<&str>) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
@@ -461,10 +475,13 @@ async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_promp
 
     let mut parts = vec![json!({"text": user_prompt})];
 
+    let has_image = image_data.is_some();
+
     if let Some(b64) = image_data {
+        let mime = detect_mime_type(b64);
         parts.push(json!({
             "inlineData": {
-                "mimeType": "image/jpeg",
+                "mimeType": mime,
                 "data": b64
             }
         }));
@@ -479,8 +496,12 @@ async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_promp
         }]
     });
 
-    if let Some(obj) = payload.as_object_mut() {
-        obj.insert("tools".to_string(), json!([{"googleSearch": {}}]));
+    // googleSearch tool conflicts with inline image data in Gemini API.
+    // Only enable it for text-only requests.
+    if !has_image {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("tools".to_string(), json!([{"googleSearch": {}}]));
+        }
     }
 
     let res = client.post(&url)

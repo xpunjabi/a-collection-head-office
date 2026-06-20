@@ -6,6 +6,7 @@ import {
   Search, Download, Upload, Plus, Edit, Trash2, Image as ImageIcon,
   X, Palette, MapPin
 } from 'lucide-react'
+import ProductImage from '../components/ProductImage'
 
 interface LocationStock {
   location_id: number;
@@ -252,10 +253,17 @@ export default function Catalog() {
                 <tr key={p.id} className="hover:bg-slate-900/20 transition-colors">
                   <td className="py-3 px-3">
                     <div className="flex items-center space-x-3">
-                      <div className="w-9 h-9 bg-slate-800 rounded-lg flex items-center justify-center overflow-hidden border border-gray-700">
-                        {p.images && JSON.parse(p.images).length > 0 ? (
-                          <img src="https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=80&auto=format&fit=crop&q=60" alt={p.name} className="object-cover w-full h-full" />
-                        ) : <ImageIcon size={16} className="text-gray-500" />}
+                      <div className="w-9 h-9 bg-slate-800 rounded-lg flex items-center justify-center overflow-hidden border border-gray-700 shrink-0">
+                        {(() => {
+                          try {
+                            const imgs: string[] = JSON.parse(p.images || '[]')
+                            return imgs.length > 0 ? (
+                              <ProductImage filename={imgs[0]} alt={p.name} className="object-cover w-full h-full" />
+                            ) : <ImageIcon size={16} className="text-gray-500" />
+                          } catch {
+                            return <ImageIcon size={16} className="text-gray-500" />
+                          }
+                        })()}
                       </div>
                       <div>
                         <span className="text-white text-sm">{p.name}</span>
@@ -388,9 +396,9 @@ export default function Catalog() {
               <div>
                 <label className="block text-xs font-semibold uppercase text-gray-400 mb-2">Images</label>
                 <div className="flex flex-wrap gap-2">
-                  {images.map((_, idx) => (
-                    <div key={idx} className="relative w-14 h-14 bg-slate-950 border border-gray-800 rounded-lg flex items-center justify-center">
-                      <ImageIcon size={16} className="text-gray-600" />
+                  {images.map((imgName, idx) => (
+                    <div key={idx} className="relative w-14 h-14 bg-slate-950 border border-gray-800 rounded-lg overflow-hidden flex items-center justify-center">
+                      <ProductImage filename={imgName} alt={`Product image ${idx + 1}`} className="object-cover w-full h-full" />
                       <button type="button" onClick={() => handleRemoveImage(idx)}
                         className="absolute top-0.5 right-0.5 bg-red-600 text-white rounded-full p-0.5"><X size={8} /></button>
                     </div>
