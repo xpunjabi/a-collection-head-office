@@ -116,6 +116,8 @@ export default function Catalog() {
       stock_quantity: Number(stockQuantity),
       status,
       images: JSON.stringify(images),
+      created_at: editProduct?.created_at,
+      updated_at: editProduct?.updated_at,
     }
 
     try {
@@ -248,9 +250,9 @@ export default function Catalog() {
             </thead>
             <tbody className="divide-y divide-gray-800 text-sm text-gray-300">
               {filteredProducts.length === 0 ? (
-                <tr><td colSpan={9} className="py-10 text-center text-gray-500">No products found.</td></tr>
+                  <tr><td colSpan={9} className="py-10 text-center text-gray-500">No products found.</td></tr>
               ) : filteredProducts.map(p => (
-                <tr key={p.id} className="hover:bg-slate-900/20 transition-colors">
+                  <tr key={p.id} onClick={() => p.id && handleOpenEdit(p)} className="hover:bg-slate-900/20 transition-colors cursor-pointer">
                   <td className="py-3 px-3">
                     <div className="flex items-center space-x-3">
                       <div className="w-9 h-9 bg-slate-800 rounded-lg flex items-center justify-center overflow-hidden border border-gray-700 shrink-0">
@@ -282,8 +284,8 @@ export default function Catalog() {
                   <td className={`py-3 px-3 text-center font-bold text-xs ${p.stock_quantity <= 5 ? 'text-red-400' : 'text-gray-300'}`}>{p.stock_quantity}</td>
                   <td className="py-3 px-3 text-center">
                     <div className="flex items-center justify-center space-x-2">
-                      <button onClick={() => p.id && handleOpenEdit(p)} className="p-1 hover:text-violet-400"><Edit size={14} /></button>
-                      <button onClick={() => p.id && handleDelete(p.id)} className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); p.id && handleOpenEdit(p); }} className="p-1 hover:text-violet-400"><Edit size={14} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); p.id && handleDelete(p.id); }} className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
                     </div>
                   </td>
                 </tr>
