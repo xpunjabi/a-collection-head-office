@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { useAppStore } from '../stores/store'
 import ProductDraftCard from './ProductDraftCard'
+import FormattedMessage from './FormattedMessage'
 import {
   Send, X, Plus, Image, Link2, FileText, Upload,
   Trash2, GripVertical, Sparkles
@@ -197,7 +198,7 @@ export default function AiWorkspace() {
                 <span className="text-[10px] block text-gray-500 mb-1">
                   {msg.role === 'user' ? 'You' : 'AI'}
                 </span>
-                <span className="whitespace-pre-wrap text-xs leading-relaxed">{msg.text}</span>
+                <FormattedMessage text={msg.text} />
               </span>
             </div>
             {/* Product Draft Card shown after AI response */}

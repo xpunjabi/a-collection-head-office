@@ -271,18 +271,25 @@ pub async fn call_ai_provider(provider: &str, api_key: &str, model: &str, system
 
 pub fn parse_draft_from_response(text: &str) -> Option<DraftResponse> {
     let body = text.trim();
-    if !body.starts_with('{') && !body.starts_with("```") {
-        return None;
+
+    // Search for ```json block anywhere in the response
+    if let Some(start_pos) = body.find("```json") {
+        let after_marker = &body[start_pos + 7..];
+        let end_pos = after_marker.find("```").unwrap_or(after_marker.len());
+        let json_str = after_marker[..end_pos].trim();
+        if let Ok(draft) = serde_json::from_str::<DraftResponse>(json_str) {
+            return Some(draft);
+        }
     }
-    let json_str = if body.starts_with("```") {
-        let lines: Vec<&str> = body.lines().collect();
-        let start = lines.iter().position(|l| l.contains("```json")).unwrap_or(0);
-        let end = lines.iter().skip(start + 1).position(|l| l.contains("```")).map(|p| start + 1 + p).unwrap_or(lines.len());
-        lines[start+1..end].join("\n")
-    } else {
-        body.to_string()
-    };
-    serde_json::from_str::<DraftResponse>(&json_str).ok()
+
+    // Fallback: try parsing the entire body as pure JSON
+    if body.starts_with('{') || body.starts_with('[') {
+        if let Ok(draft) = serde_json::from_str::<DraftResponse>(body) {
+            return Some(draft);
+        }
+    }
+
+    None
 }
 
 pub fn prepare_marketing_data(conn: &Connection, product_id: i64) -> Result<(crate::catalog::Product, String, String, String, bool, bool), String> {
