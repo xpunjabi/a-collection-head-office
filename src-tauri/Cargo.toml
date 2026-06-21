@@ -1,6 +1,6 @@
 [package]
 name = "a-collection-head-office"
-version = "0.4.4"
+version = "0.4.5"
 description = "Local-first AI-assisted business OS"
 edition = "2021"
 
@@ -24,3 +24,4 @@ dirs = "5.0.1"
 base64 = "0.22.1"
 rqrr = "0.5"
 ocrs = "0.6"
+rten-tensor = "0.8"

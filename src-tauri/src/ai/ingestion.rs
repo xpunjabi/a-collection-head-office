@@ -1,6 +1,6 @@
 use image::GenericImageView;
 use ocrs::OcrEngine;
-use rqrr::PreppedImage;
+use rqrr::PreparedImage;
 
 pub struct LocalExtractionResult {
     pub qr_data: Option<String>,
@@ -19,7 +19,7 @@ pub fn extract_local_data(image_bytes: &[u8]) -> Result<LocalExtractionResult, S
 
 fn decode_qr(img: &image::DynamicImage) -> Result<Option<String>, String> {
     let gray = img.to_luma8();
-    let mut prep = PreppedImage::prepare(gray);
+    let mut prep = PreparedImage::prepare(gray);
     let grids = prep.detect_grids();
 
     if grids.is_empty() {
@@ -42,22 +42,35 @@ fn decode_qr(img: &image::DynamicImage) -> Result<Option<String>, String> {
 
 fn run_ocr(img: &image::DynamicImage) -> Result<Option<String>, String> {
     let rgb = img.to_rgb8();
-    let (width, height) = img.dimensions();
-    let input = ocrs::OcrInput::from_bytes(&rgb, (width, height))
-        .map_err(|e| format!("Failed to create OCR input: {}", e))?;
+    let (h, w) = (rgb.height() as usize, rgb.width() as usize);
+    let raw = rgb.into_raw();
+
+    let mut chw = vec![0.0f32; 3 * h * w];
+    for y in 0..h {
+        for x in 0..w {
+            let src = (y * w + x) * 3;
+            let dst = y * w + x;
+            chw[dst] = raw[src] as f32 / 255.0;
+            chw[1 * h * w + dst] = raw[src + 1] as f32 / 255.0;
+            chw[2 * h * w + dst] = raw[src + 2] as f32 / 255.0;
+        }
+    }
+
+    let tensor = rten_tensor::NdTensor::from_data([3, h, w], chw);
 
     let engine = OcrEngine::new(ocrs::OcrEngineParams::default())
         .map_err(|e| format!("Failed to create OCR engine: {}", e))?;
 
-    let output = engine.run(&input)
+    let input = engine.prepare_input(tensor.view())
+        .map_err(|e| format!("Failed to prepare OCR input: {}", e))?;
+
+    let text = engine.get_text(&input)
         .map_err(|e| format!("OCR processing failed: {}", e))?;
 
-    let text = output.to_text();
-    let text = text.trim();
-
+    let text = text.trim().to_string();
     if text.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(text.to_string()))
+        Ok(Some(text))
     }
 }
