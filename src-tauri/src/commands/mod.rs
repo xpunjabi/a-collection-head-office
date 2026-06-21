@@ -274,6 +274,22 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
             }
             Ok(None) => {
                 println!("[Local Match] No match found. Proceeding to next steps.");
+                let (api_key, model) = {
+                    let conn = state.0.lock().unwrap();
+                    let cfg = ai::get_ai_config(&conn)?;
+                    (cfg.1.clone(), cfg.2.clone())
+                };
+                match crate::ai::catalog_composer::generate_catalog_draft(
+                    extraction, &Some(prompt.clone()), &api_key, &model
+                ).await {
+                    Ok(draft) => {
+                        println!("[AI Draft] title={} brand={:?} fabric={:?} design_code={:?}",
+                            draft.title, draft.brand, draft.fabric, draft.design_code);
+                    }
+                    Err(e) => {
+                        println!("[AI Draft] Error: {}", e);
+                    }
+                }
             }
             Err(e) => {
                 println!("[Local Match] Error: {}", e);

@@ -4,6 +4,7 @@ use reqwest::Client;
 use std::time::Duration;
 use serde_json::json;
 
+pub mod catalog_composer;
 pub mod ingestion;
 pub mod local_match;
 
