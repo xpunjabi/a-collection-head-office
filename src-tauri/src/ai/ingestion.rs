@@ -1,6 +1,6 @@
-use image::GenericImageView;
 use ocrs::OcrEngine;
 use rqrr::PreparedImage;
+use rten_tensor::AsView;
 
 pub struct LocalExtractionResult {
     pub qr_data: Option<String>,
