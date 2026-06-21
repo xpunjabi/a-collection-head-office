@@ -1,70 +1,29 @@
 stages:
   - check
-  - release
 
 variables:
-  CARGO_HOME: ${CI_PROJECT_DIR}\.cargo
+  CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
   NODE_OPTIONS: --no-deprecation
 
 cache:
   key: ${CI_COMMIT_REF_SLUG}
   paths:
     - .cargo
-    - src-tauri\target
+    - src-tauri/target
     - node_modules
 
-.check-base: &check-base
-  stage: check
-  tags:
-    - saas-windows-medium
-  before_script:
-    - echo "Installing Rust toolchain..."
-    - curl -sSf https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe -o rustup-init.exe
-    - .\rustup-init.exe -y --default-host x86_64-pc-windows-msvc --default-toolchain stable --profile minimal
-    - del rustup-init.exe
-    - echo "Setting PATH..."
-    - $env:Path += ";$env:USERPROFILE\.cargo\bin"
-    - echo "Installing frontend deps..."
-    - npm install --no-audit --no-fund
-  script:
-    - echo "TypeScript check..."
-    - npx tsc --noEmit
-    - echo "Rust compile check..."
-    - cargo check --manifest-path src-tauri\Cargo.toml
-    - echo "Vite build..."
-    - npm run build
-
 check:
-  <<: *check-base
+  stage: check
+  image: node:20
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl pkg-config libssl-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf file > /dev/null 2>&1
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal 2>&1 | tail -1
+    - . "$HOME/.cargo/env"
+    - npm install --no-audit --no-fund 2>&1 | tail -5
+  script:
+    - . "$HOME/.cargo/env"
+    - echo "=== TypeScript check ===" && npx tsc --noEmit
+    - echo "=== Rust compile check ===" && cargo check --manifest-path src-tauri/Cargo.toml 2>&1
+    - echo "=== Vite build ===" && npm run build 2>&1 | tail -5
   only:
     - master
-
-.release-base: &release-base
-  stage: release
-  tags:
-    - saas-windows-medium
-  before_script:
-    - echo "Installing Rust toolchain..."
-    - curl -sSf https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe -o rustup-init.exe
-    - .\rustup-init.exe -y --default-host x86_64-pc-windows-msvc --default-toolchain stable --profile minimal
-    - del rustup-init.exe
-    - $env:Path += ";$env:USERPROFILE\.cargo\bin"
-    - echo "Installing frontend deps..."
-    - npm install --no-audit --no-fund
-  script:
-    - echo "Building frontend..."
-    - npm run build
-    - echo "Building Tauri app..."
-    - npx tauri build --bundles nsis,msi
-  artifacts:
-    paths:
-      - src-tauri\target\release\bundle\msi\
-      - src-tauri\target\release\bundle\nsis\
-    expire_in: 30 days
-
-release:
-  <<: *release-base
-  only:
-    - tags
-  except:
-    - branches
