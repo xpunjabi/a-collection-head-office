@@ -397,7 +397,35 @@ pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai:
 
 #[tauri::command]
 pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::catalog_composer::CatalogDraft) -> Result<i64, String> {
+    let conn = state.0.lock().unwrap();
     let now = chrono::Utc::now().to_rfc3339();
+    let sku = draft.design_code.clone().unwrap_or_default();
+    let title = &draft.title;
+
+    // Duplicate check by SKU (design_code)
+    if !sku.is_empty() {
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM products WHERE sku = ?1",
+            [&sku],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if exists {
+            return Err(format!("Duplicate item found. SKU: {} already exists in catalog.", sku));
+        }
+    }
+
+    // Duplicate check by title (case-insensitive)
+    if !title.is_empty() {
+        let exists: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM products WHERE LOWER(name) = LOWER(?1)",
+            [title],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if exists {
+            return Err(format!("Duplicate item found. '{}' already exists in catalog.", title));
+        }
+    }
+
     let mut tags = Vec::new();
     if let Some(ref brand) = draft.brand {
         if !brand.is_empty() { tags.push(format!("Brand: {}", brand)); }
@@ -425,7 +453,6 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
         created_at: now.clone(),
         updated_at: now,
     };
-    let conn = state.0.lock().unwrap();
     let id = crate::catalog::add_product(&conn, &product).map_err(|e| e.to_string())?;
     Ok(id)
 }

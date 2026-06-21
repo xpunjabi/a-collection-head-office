@@ -47,7 +47,12 @@ export default function AiWorkspace() {
       setToast('Item added to catalog!')
       removeAiMessage(index)
     } catch (err) {
-      setToast(`Failed to save: ${err}`)
+      const msg = String(err)
+      if (msg.includes('Duplicate item found')) {
+        setToast('Warning: This item is already in your catalog!')
+      } else {
+        setToast(`Failed to save: ${err}`)
+      }
     } finally {
       setSavingIndex(null)
     }
@@ -73,7 +78,12 @@ export default function AiWorkspace() {
         aiMessages: [...state.aiMessages, postMsg as any],
       }))
     } catch (err) {
-      setToast(`Failed: ${err}`)
+      const msg = String(err)
+      if (msg.includes('Duplicate item found')) {
+        setToast('Warning: This item is already in your catalog!')
+      } else {
+        setToast(`Failed: ${err}`)
+      }
     } finally {
       setGeneratingIndex(null)
     }
@@ -473,7 +483,7 @@ export default function AiWorkspace() {
             <span className="inline-block px-3 py-2 rounded-xl bg-slate-800/60 text-gray-400 border border-gray-800">
               <span className="flex items-center space-x-2">
                 <span className="w-1.5 h-1.5 bg-violet-400 rounded-full animate-pulse" />
-                <span>Thinking...</span>
+                <span>{aiMessages.length > 0 && aiMessages[aiMessages.length - 1].image_data ? 'AI is analyzing the image...' : 'Thinking...'}</span>
               </span>
             </span>
           </div>
@@ -483,7 +493,9 @@ export default function AiWorkspace() {
 
       {/* Toast notification */}
       {toast && (
-        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-30 bg-slate-950 border border-emerald-700/50 text-emerald-300 text-xs px-4 py-2 rounded-lg shadow-xl whitespace-nowrap">
+        <div className={`absolute bottom-20 left-1/2 -translate-x-1/2 z-30 bg-slate-950 border text-xs px-4 py-2 rounded-lg shadow-xl whitespace-nowrap ${
+          toast.startsWith('Warning') ? 'border-amber-700/50 text-amber-300' : 'border-emerald-700/50 text-emerald-300'
+        }`}>
           {toast}
         </div>
       )}
