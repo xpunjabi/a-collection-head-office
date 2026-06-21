@@ -446,6 +446,24 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
 }
 
 #[tauri::command]
+pub async fn generate_social_post(state: State<'_, DbState>, product_id: i64) -> Result<crate::ai::marketing_engine::MarketingPost, String> {
+    let (api_key, model) = {
+        let conn = state.0.lock().unwrap();
+        let cfg = ai::get_ai_config(&conn)?;
+        (cfg.1.clone(), cfg.2.clone())
+    };
+    let product = {
+        let conn = state.0.lock().unwrap();
+        crate::catalog::get_product_by_id(&conn, product_id).map_err(|e| e.to_string())?
+    };
+    let product_name = &product.name;
+    let brand = product.design.as_deref().unwrap_or("");
+    let fabric = product.tags.as_deref().unwrap_or("");
+    let notes = product.description.as_deref().unwrap_or("");
+    crate::ai::marketing_engine::generate_marketing_post(product_name, brand, fabric, notes, &api_key, &model).await
+}
+
+#[tauri::command]
 pub async fn generate_marketing(state: State<'_, DbState>, product_id: i64) -> Result<Vec<ai::MarketingContent>, String> {
     let (product, provider, api_key, model, has_fb, has_wa) = {
         let conn = state.0.lock().unwrap();

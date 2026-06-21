@@ -7,6 +7,7 @@ use serde_json::json;
 pub mod catalog_composer;
 pub mod ingestion;
 pub mod local_match;
+pub mod marketing_engine;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]

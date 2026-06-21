@@ -1,11 +1,11 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { useAppStore } from '../stores/store'
+import { useAppStore, CatalogDraft } from '../stores/store'
 import ProductDraftCard from './ProductDraftCard'
 import FormattedMessage from './FormattedMessage'
 import { invoke } from '@tauri-apps/api/core'
 import {
   Send, X, Plus, Image, Link2, FileText, Upload,
-  Trash2, GripVertical, Sparkles, Check, Ban
+  Trash2, GripVertical, Sparkles, Check, Ban, Copy, Sparkle
 } from 'lucide-react'
 
 export default function AiWorkspace() {
@@ -23,6 +23,7 @@ export default function AiWorkspace() {
   const [isDragging, setIsDragging] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [savingIndex, setSavingIndex] = useState<number | null>(null)
+  const [generatingIndex, setGeneratingIndex] = useState<number | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -54,6 +55,56 @@ export default function AiWorkspace() {
 
   const handleDiscardDraft = (index: number) => {
     removeAiMessage(index)
+  }
+
+  const handleSaveAndGenerate = async (index: number, draft: CatalogDraft) => {
+    setGeneratingIndex(index)
+    try {
+      const productId = await invoke<number>('save_catalog_draft', { draft })
+      const post = await invoke<import('../stores/store').MarketingPost>('generate_social_post', { productId })
+      setToast('Item added to catalog!')
+      removeAiMessage(index)
+      const postMsg = {
+        role: 'assistant' as const,
+        text: '',
+        social_post: post,
+      }
+      useAppStore.setState((state) => ({
+        aiMessages: [...state.aiMessages, postMsg as any],
+      }))
+    } catch (err) {
+      setToast(`Failed: ${err}`)
+    } finally {
+      setGeneratingIndex(null)
+    }
+  }
+
+  const handleGeneratePostForExisting = async (index: number, itemId: string) => {
+    setGeneratingIndex(index)
+    try {
+      const post = await invoke<import('../stores/store').MarketingPost>('generate_social_post', { productId: parseInt(itemId) })
+      const postMsg = {
+        role: 'assistant' as const,
+        text: '',
+        social_post: post,
+      }
+      useAppStore.setState((state) => ({
+        aiMessages: [...state.aiMessages, postMsg as any],
+      }))
+    } catch (err) {
+      setToast(`Failed to generate: ${err}`)
+    } finally {
+      setGeneratingIndex(null)
+    }
+  }
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setToast('Copied to clipboard!')
+    } catch {
+      setToast('Failed to copy')
+    }
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -264,6 +315,16 @@ export default function AiWorkspace() {
                         ({msg.fast_path_data.data.design_code})
                       </span>
                     )}
+                    <div className="mt-2 pt-2 border-t border-emerald-800/20">
+                      <button
+                        onClick={() => handleGeneratePostForExisting(i, (msg.fast_path_data!.data as import('../stores/store').LocalMatchResult).item_id)}
+                        disabled={generatingIndex === i}
+                        className="flex items-center space-x-1 px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-emerald-200 rounded text-[11px] font-medium transition-colors"
+                      >
+                        <Sparkle size={12} />
+                        <span>{generatingIndex === i ? 'Generating...' : 'Generate Post'}</span>
+                      </button>
+                    </div>
                   </div>
                 )}
                 {msg.fast_path_data.type === 'NewCatalogDraft' && (
@@ -311,17 +372,61 @@ export default function AiWorkspace() {
                         <span>{savingIndex === i ? 'Saving...' : 'Add to Catalog'}</span>
                       </button>
                       <button
+                        onClick={() => handleSaveAndGenerate(i, msg.fast_path_data!.data)}
+                        disabled={savingIndex === i || generatingIndex === i}
+                        className="flex items-center space-x-1 px-2.5 py-1 bg-violet-600 hover:bg-violet-500 disabled:bg-violet-800 text-white rounded text-[11px] font-medium transition-colors"
+                      >
+                        <Sparkle size={12} />
+                        <span>{generatingIndex === i ? 'Generating...' : 'Save & Generate Post'}</span>
+                      </button>
+                      <button
                         onClick={() => handleDiscardDraft(i)}
-                        disabled={savingIndex === i}
+                        disabled={savingIndex === i || generatingIndex === i}
                         className="flex items-center space-x-1 px-2.5 py-1 bg-red-600/60 hover:bg-red-500/80 disabled:opacity-50 text-red-200 rounded text-[11px] font-medium transition-colors"
                       >
                         <Ban size={12} />
                         <span>Discard</span>
                       </button>
                     </div>
-                  </div>
-                )}
               </div>
+            )}
+            {msg.role === 'assistant' && (msg as any).social_post && (
+              <div className="mt-2">
+                <div className="bg-gradient-to-r from-pink-900/30 to-violet-900/30 border border-pink-700/30 rounded-xl px-4 py-3 space-y-3 text-xs">
+                  <div className="text-pink-300 font-semibold flex items-center space-x-1.5">
+                    <Sparkle size={14} />
+                    <span>Social Media Post</span>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-gray-500 uppercase text-[10px] font-semibold">Short Caption (WhatsApp)</span>
+                      <button onClick={() => copyToClipboard((msg as any).social_post.short_caption)} className="text-pink-400/70 hover:text-pink-300 transition-colors">
+                        <Copy size={12} />
+                      </button>
+                    </div>
+                    <p className="text-gray-200 bg-black/20 rounded-lg px-3 py-2 leading-relaxed">{(msg as any).social_post.short_caption}</p>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-gray-500 uppercase text-[10px] font-semibold">Long Caption (Instagram/Facebook)</span>
+                      <button onClick={() => copyToClipboard((msg as any).social_post.long_caption)} className="text-pink-400/70 hover:text-pink-300 transition-colors">
+                        <Copy size={12} />
+                      </button>
+                    </div>
+                    <p className="text-gray-200 bg-black/20 rounded-lg px-3 py-2 leading-relaxed">{(msg as any).social_post.long_caption}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 uppercase text-[10px] font-semibold block mb-1">Hashtags</span>
+                    <div className="flex flex-wrap gap-1">
+                      {(msg as any).social_post.hashtags.map((tag: string, ti: number) => (
+                        <span key={ti} className="text-pink-400 bg-pink-900/20 px-2 py-0.5 rounded-full text-[10px]">{tag}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
             )}
           </div>
         ))}

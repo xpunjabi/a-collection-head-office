@@ -108,6 +108,12 @@ export interface MarketingContent {
   caption_type: string;
 }
 
+export interface MarketingPost {
+  short_caption: string;
+  long_caption: string;
+  hashtags: string[];
+}
+
 export interface WorkspaceAsset {
   id: string;
   name: string;
@@ -175,7 +181,7 @@ interface AppState {
   clearWorkspaceAssets: () => void;
 
   // AI Assistant Chat
-  aiMessages: { role: 'user' | 'assistant'; text: string; action?: string; product_draft?: ProductDraft; confidence?: number; missing_fields?: string[]; suggested_actions?: string[]; fast_path_data?: AssistantResult }[];
+  aiMessages: { role: 'user' | 'assistant'; text: string; action?: string; product_draft?: ProductDraft; confidence?: number; missing_fields?: string[]; suggested_actions?: string[]; fast_path_data?: AssistantResult; social_post?: MarketingPost }[];
   isAiLoading: boolean;
   sendAiMessage: (prompt: string, imageData?: string) => Promise<void>;
   clearAiChat: () => void;
