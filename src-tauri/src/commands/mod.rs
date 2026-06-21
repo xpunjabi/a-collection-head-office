@@ -263,6 +263,8 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
         None
     };
 
+    let mut fast_path_data: Option<ai::AssistantResult> = None;
+
     if let Some(ref extraction) = extraction {
         let match_result = {
             let conn = state.0.lock().unwrap();
@@ -271,6 +273,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
         match match_result {
             Ok(Some(mr)) => {
                 println!("[Local Match] Found: id={} title={} confidence={}", mr.item_id, mr.title, mr.confidence);
+                fast_path_data = Some(ai::AssistantResult::LocalMatchFound(mr));
             }
             Ok(None) => {
                 println!("[Local Match] No match found. Proceeding to next steps.");
@@ -285,6 +288,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
                     Ok(draft) => {
                         println!("[AI Draft] title={} brand={:?} fabric={:?} design_code={:?}",
                             draft.title, draft.brand, draft.fabric, draft.design_code);
+                        fast_path_data = Some(ai::AssistantResult::NewCatalogDraft(draft));
                     }
                     Err(e) => {
                         println!("[AI Draft] Error: {}", e);
@@ -324,7 +328,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
         ai::log_request(&conn, &prompt, &response_text, &provider)?;
     }
 
-    let mut resp = AiResponse { text: response_text.clone(), detected_action: None, action_data: None, product_draft: None, confidence: None, missing_fields: None, suggested_actions: None };
+    let mut resp = AiResponse { text: response_text.clone(), detected_action: None, action_data: None, product_draft: None, confidence: None, missing_fields: None, suggested_actions: None, fast_path_data };
 
     if let Some(draft_resp) = ai::parse_draft_from_response(&response_text) {
         resp.product_draft = Some(draft_resp.draft);

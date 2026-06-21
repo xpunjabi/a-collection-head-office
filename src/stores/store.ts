@@ -70,6 +70,25 @@ export interface ProductDraft {
   images?: string[];
 }
 
+export interface LocalMatchResult {
+  item_id: string;
+  title: string;
+  design_code?: string;
+  confidence: number;
+}
+
+export interface CatalogDraft {
+  title: string;
+  brand?: string;
+  fabric?: string;
+  design_code?: string;
+  notes?: string;
+}
+
+export type AssistantResult =
+  | { type: "LocalMatchFound"; data: LocalMatchResult }
+  | { type: "NewCatalogDraft"; data: CatalogDraft };
+
 export interface AiResponse {
   text: string;
   detected_action?: string;
@@ -78,6 +97,7 @@ export interface AiResponse {
   confidence?: number;
   missing_fields?: string[];
   suggested_actions?: string[];
+  fast_path_data?: AssistantResult;
 }
 
 export interface MarketingContent {
@@ -153,7 +173,7 @@ interface AppState {
   clearWorkspaceAssets: () => void;
 
   // AI Assistant Chat
-  aiMessages: { role: 'user' | 'assistant'; text: string; action?: string; product_draft?: ProductDraft; confidence?: number; missing_fields?: string[]; suggested_actions?: string[] }[];
+  aiMessages: { role: 'user' | 'assistant'; text: string; action?: string; product_draft?: ProductDraft; confidence?: number; missing_fields?: string[]; suggested_actions?: string[]; fast_path_data?: AssistantResult }[];
   isAiLoading: boolean;
   sendAiMessage: (prompt: string, imageData?: string) => Promise<void>;
   clearAiChat: () => void;
@@ -415,6 +435,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         confidence: response.confidence,
         missing_fields: response.missing_fields,
         suggested_actions: response.suggested_actions,
+        fast_path_data: response.fast_path_data,
       };
 
       set((state) => ({

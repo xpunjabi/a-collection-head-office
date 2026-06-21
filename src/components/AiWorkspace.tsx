@@ -226,6 +226,53 @@ export default function AiWorkspace() {
                 />
               </div>
             )}
+            {msg.role === 'assistant' && msg.fast_path_data && (
+              <div className="mt-2">
+                {msg.fast_path_data.type === 'LocalMatchFound' && (
+                  <div className="bg-emerald-900/30 border border-emerald-700/30 rounded-lg px-3 py-2 text-xs text-emerald-300">
+                    <span className="font-semibold">Item already exists:</span>{' '}
+                    {msg.fast_path_data.data.title}
+                    {msg.fast_path_data.data.design_code && (
+                      <span className="text-emerald-400/70 ml-1">
+                        ({msg.fast_path_data.data.design_code})
+                      </span>
+                    )}
+                  </div>
+                )}
+                {msg.fast_path_data.type === 'NewCatalogDraft' && (
+                  <div className="bg-violet-900/30 border border-violet-700/30 rounded-lg px-3 py-2 text-xs space-y-1">
+                    <div className="text-violet-300 font-semibold mb-1">Catalog Draft</div>
+                    <div className="text-gray-300">
+                      <span className="text-gray-500">Title:</span>{' '}
+                      {msg.fast_path_data.data.title}
+                    </div>
+                    {msg.fast_path_data.data.brand && (
+                      <div className="text-gray-300">
+                        <span className="text-gray-500">Brand:</span>{' '}
+                        {msg.fast_path_data.data.brand}
+                      </div>
+                    )}
+                    {msg.fast_path_data.data.fabric && (
+                      <div className="text-gray-300">
+                        <span className="text-gray-500">Fabric:</span>{' '}
+                        {msg.fast_path_data.data.fabric}
+                      </div>
+                    )}
+                    {msg.fast_path_data.data.design_code && (
+                      <div className="text-gray-300">
+                        <span className="text-gray-500">Design Code:</span>{' '}
+                        {msg.fast_path_data.data.design_code}
+                      </div>
+                    )}
+                    {msg.fast_path_data.data.notes && (
+                      <div className="text-gray-400 italic mt-1">
+                        {msg.fast_path_data.data.notes}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ))}
         {isAiLoading && (

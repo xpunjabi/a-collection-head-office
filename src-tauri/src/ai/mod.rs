@@ -9,6 +9,13 @@ pub mod ingestion;
 pub mod local_match;
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum AssistantResult {
+    LocalMatchFound(local_match::LocalMatchResult),
+    NewCatalogDraft(catalog_composer::CatalogDraft),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AiResponse {
     pub text: String,
     pub detected_action: Option<String>,
@@ -17,6 +24,7 @@ pub struct AiResponse {
     pub confidence: Option<f64>,
     pub missing_fields: Option<Vec<String>>,
     pub suggested_actions: Option<Vec<String>>,
+    pub fast_path_data: Option<AssistantResult>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

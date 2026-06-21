@@ -1,5 +1,7 @@
 use rusqlite::Connection;
+use serde::Serialize;
 
+#[derive(Debug, Serialize)]
 pub struct LocalMatchResult {
     pub item_id: String,
     pub title: String,
