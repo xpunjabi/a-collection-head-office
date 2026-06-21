@@ -19,7 +19,10 @@ pub fn extract_local_data(image_bytes: &[u8]) -> Result<LocalExtractionResult, S
 
 fn decode_qr(img: &image::DynamicImage) -> Result<Option<String>, String> {
     let gray = img.to_luma8();
-    let mut prep = PreparedImage::prepare(gray);
+    let (w, h) = (gray.width() as usize, gray.height() as usize);
+    let pixels = gray.into_raw();
+
+    let mut prep = PreparedImage::prepare_from_greyscale(w, h, move |x, y| pixels[y * w + x]);
     let grids = prep.detect_grids();
 
     if grids.is_empty() {
@@ -61,7 +64,7 @@ fn run_ocr(img: &image::DynamicImage) -> Result<Option<String>, String> {
     let engine = OcrEngine::new(ocrs::OcrEngineParams::default())
         .map_err(|e| format!("Failed to create OCR engine: {}", e))?;
 
-    let input = engine.prepare_input(tensor.view())
+    let input = engine.prepare_input(tensor.nd_view())
         .map_err(|e| format!("Failed to prepare OCR input: {}", e))?;
 
     let text = engine.get_text(&input)
