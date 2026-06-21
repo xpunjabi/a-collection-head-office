@@ -422,6 +422,7 @@ fn parse_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
                     confidence: None,
                     missing_fields: None,
                     suggested_actions: None,
+                    fast_path_data: None,
                 });
             }
         }
@@ -456,6 +457,7 @@ fn parse_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
                                 confidence: None,
                                 missing_fields: None,
                                 suggested_actions: None,
+                                fast_path_data: None,
                             });
                         }
                     }
