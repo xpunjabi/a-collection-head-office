@@ -1,4 +1,6 @@
 check:
+  tags:
+    - saas-linux-small-amd64
   image: node:20
   script:
     - echo "Hello from GitLab CI!"
