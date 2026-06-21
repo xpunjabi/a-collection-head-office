@@ -241,6 +241,22 @@ pub async fn get_customer_report(state: State<'_, DbState>) -> Result<CustomerSu
 
 #[tauri::command]
 pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Option<String>) -> Result<AiResponse, String> {
+    println!("[ask_ai] instruction='{}' has_image={}", prompt, image_data.is_some());
+
+    if let Some(ref b64) = image_data {
+        use base64::Engine as _;
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
+            match crate::ai::ingestion::extract_local_data(&bytes) {
+                Ok(result) => {
+                    println!("[Local Extraction] qr={:?} ocr={:?}", result.qr_data, result.ocr_text);
+                }
+                Err(e) => {
+                    println!("[Local Extraction] Error: {}", e);
+                }
+            }
+        }
+    }
+
     let local_result = {
         let conn = state.0.lock().unwrap();
         ai::try_local_intent(&conn, &prompt)

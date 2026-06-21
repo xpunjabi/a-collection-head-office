@@ -4,6 +4,8 @@ use reqwest::Client;
 use std::time::Duration;
 use serde_json::json;
 
+pub mod ingestion;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AiResponse {
     pub text: String,

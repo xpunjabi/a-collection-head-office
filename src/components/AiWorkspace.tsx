@@ -16,6 +16,8 @@ export default function AiWorkspace() {
   } = useAppStore()
 
   const [inputText, setInputText] = useState('')
+  const [pendingImage, setPendingImage] = useState<string | null>(null)
+  const [pendingImageName, setPendingImageName] = useState('')
   const [showMenu, setShowMenu] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -29,10 +31,14 @@ export default function AiWorkspace() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (inputText.trim()) {
-      sendAiMessage(inputText.trim())
-      setInputText('')
-    }
+    const text = inputText.trim()
+    if (!text && !pendingImage) return
+
+    const prompt = text || 'Process this image for cataloging'
+    sendAiMessage(prompt, pendingImage || undefined)
+    setInputText('')
+    setPendingImage(null)
+    setPendingImageName('')
   }
 
   const handleImageSelect = () => {
@@ -43,14 +49,19 @@ export default function AiWorkspace() {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = async (ev) => {
-      const base64 = (ev.target?.result as string)?.split(',')[1]
-      if (base64) {
-        sendAiMessage(`[Image: ${file.name}]`, base64)
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        const base64 = (ev.target?.result as string)?.split(',')[1]
+        if (base64) {
+          setPendingImage(base64)
+          setPendingImageName(file.name)
+        }
       }
+      reader.readAsDataURL(file)
+    } else if (file.type === 'application/pdf' || file.type.includes('text')) {
+      setInputText(`[File: ${file.name}] Please analyze this document and extract any product information.`)
     }
-    reader.readAsDataURL(file)
     e.target.value = ''
   }
 
@@ -82,15 +93,14 @@ export default function AiWorkspace() {
         reader.onload = (ev) => {
           const base64 = (ev.target?.result as string)?.split(',')[1]
           if (base64) {
-            sendAiMessage(`[Image: ${file.name}]`, base64)
+            setPendingImage(base64)
+            setPendingImageName(file.name)
           }
         }
         reader.readAsDataURL(file)
-      } else if (file.type === 'application/pdf' || file.type.includes('text')) {
-        sendAiMessage(`[File: ${file.name}] Please analyze this document and extract any product information.`)
       }
     }
-  }, [sendAiMessage])
+  }, [])
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
@@ -105,7 +115,8 @@ export default function AiWorkspace() {
           reader.onload = (ev) => {
             const base64 = (ev.target?.result as string)?.split(',')[1]
             if (base64) {
-              sendAiMessage('[Pasted image]', base64)
+              setPendingImage(base64)
+              setPendingImageName('Pasted image')
             }
           }
           reader.readAsDataURL(file)
@@ -113,7 +124,7 @@ export default function AiWorkspace() {
         }
       }
     }
-  }, [sendAiMessage])
+  }, [])
 
   // Resize handler
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -142,9 +153,13 @@ export default function AiWorkspace() {
     document.addEventListener('mouseup', handleMouseUp)
   }, [setAiWorkspaceWidth])
 
+  const clearPendingImage = () => {
+    setPendingImage(null)
+    setPendingImageName('')
+  }
+
   if (!showAiAssistant) return null
 
-  // Collect all active drafts from messages
   const activeDrafts = aiProductDrafts
 
   return (
@@ -201,7 +216,6 @@ export default function AiWorkspace() {
                 <FormattedMessage text={msg.text} />
               </span>
             </div>
-            {/* Product Draft Card shown after AI response */}
             {msg.role === 'assistant' && msg.product_draft && msg.confidence !== undefined && (
               <div className="mt-2">
                 <ProductDraftCard
@@ -246,6 +260,24 @@ export default function AiWorkspace() {
             <span>{activeDrafts.length} product draft{activeDrafts.length > 1 ? 's' : ''} pending review</span>
           </div>
         )}
+
+        {/* Pending image preview */}
+        {pendingImage && (
+          <div className="flex items-center space-x-2 bg-slate-950 border border-gray-800 rounded-lg px-2 py-1.5">
+            <div className="w-10 h-10 rounded overflow-hidden bg-slate-900 shrink-0">
+              <img
+                src={`data:image/jpeg;base64,${pendingImage}`}
+                alt="Preview"
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <span className="text-xs text-gray-400 truncate flex-1">{pendingImageName}</span>
+            <button type="button" onClick={clearPendingImage} className="p-0.5 text-gray-500 hover:text-red-400 transition-colors">
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
         <div className="flex items-center space-x-1.5">
           <div className="relative">
             <button
@@ -276,12 +308,12 @@ export default function AiWorkspace() {
             type="text"
             value={inputText}
             onChange={e => setInputText(e.target.value)}
-            placeholder="Ask AI, paste image (Ctrl+V), or drop link..."
+            placeholder={pendingImage ? 'Add instructions for this image...' : 'Ask AI, paste image (Ctrl+V)...'}
             className="flex-1 bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-violet-500"
           />
           <button
             type="submit"
-            disabled={isAiLoading || (!inputText.trim())}
+            disabled={isAiLoading || (!inputText.trim() && !pendingImage)}
             className="p-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors disabled:opacity-50"
           >
             <Send size={16} />
