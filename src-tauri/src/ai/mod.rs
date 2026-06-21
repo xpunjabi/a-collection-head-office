@@ -500,11 +500,17 @@ async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_promp
     let has_image = image_data.is_some();
 
     if let Some(b64) = image_data {
-        let mime = detect_mime_type(b64);
+        // Strip data URI prefix if present (e.g. "data:image/jpeg;base64,...")
+        let clean_b64 = if let Some(comma_pos) = b64.find(',') {
+            &b64[comma_pos + 1..]
+        } else {
+            b64
+        };
+        let mime = detect_mime_type(clean_b64);
         parts.push(json!({
             "inlineData": {
                 "mimeType": mime,
-                "data": b64
+                "data": clean_b64
             }
         }));
     }

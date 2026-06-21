@@ -307,7 +307,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
                 };
 
                 match crate::ai::catalog_composer::generate_catalog_draft(
-                    extraction, &Some(prompt.clone()), &api_key, &model, &web_evidence
+                    extraction, &Some(prompt.clone()), &api_key, &model, &web_evidence, image_data.as_deref()
                 ).await {
                     Ok(draft) => {
                         println!("[AI Draft] title={} brand={:?} fabric={:?} design_code={:?} web_count={:?}",

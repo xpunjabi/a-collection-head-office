@@ -19,12 +19,16 @@ pub async fn generate_catalog_draft(
     api_key: &str,
     model: &str,
     web_evidence: &Option<WebEvidence>,
+    image_base64: Option<&str>,
 ) -> Result<CatalogDraft, String> {
     let mut system_prompt = "\
 You are an autonomous fashion catalog AI operating inside a desktop app. \
 You ALWAYS have access to local database matching and web search tools. \
 Never say 'I don't have access to the internet' or 'I cannot browse'. \
 Always provide the best possible answer based on the provided evidence.
+You are also provided with an image of the product. \
+Analyze the visual details (color, pattern, fabric type, embroidery). \
+Combine your visual analysis with the provided OCR text and Web Evidence to generate the most accurate catalog draft.
 Your task is to generate a complete product catalog entry from the provided extracted data. \
 Return ONLY valid JSON without any markdown formatting, code blocks, or extra text.".to_string();
 
@@ -55,7 +59,7 @@ Return ONLY valid JSON without any markdown formatting, code blocks, or extra te
         }
     }
 
-    let response = super::call_ai_provider("gemini", api_key, model, &system_prompt, &user_prompt, None).await?;
+    let response = super::call_ai_provider("gemini", api_key, model, &system_prompt, &user_prompt, image_base64).await?;
 
     let body = response.trim();
 
