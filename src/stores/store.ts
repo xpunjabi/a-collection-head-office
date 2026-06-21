@@ -83,6 +83,8 @@ export interface CatalogDraft {
   fabric?: string;
   design_code?: string;
   notes?: string;
+  web_evidence_count?: number;
+  web_evidence_snippets?: string[];
 }
 
 export type AssistantResult =

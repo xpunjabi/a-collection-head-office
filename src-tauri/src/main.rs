@@ -6,6 +6,7 @@ mod inventory;
 mod customers;
 mod reports;
 mod locations;
+mod adapters;
 mod ai;
 mod automation;
 mod utils;

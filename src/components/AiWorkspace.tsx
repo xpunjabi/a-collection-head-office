@@ -269,6 +269,11 @@ export default function AiWorkspace() {
                         {msg.fast_path_data.data.notes}
                       </div>
                     )}
+                    {msg.fast_path_data.data.web_evidence_count && (
+                      <div className="text-cyan-400/80 text-[10px] mt-1.5 border-t border-violet-800/30 pt-1">
+                        Web Evidence: Found {msg.fast_path_data.data.web_evidence_count} matching result{msg.fast_path_data.data.web_evidence_count !== 1 ? 's' : ''} from internet search
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

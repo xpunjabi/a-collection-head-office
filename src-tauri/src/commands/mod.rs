@@ -3,6 +3,7 @@ use crate::inventory::{self, InventorySummary, LowStockItem, DeadStockItem, Best
 use crate::customers::{self, Customer, OrderItemInput, OrderHistory};
 use crate::reports::{self, SalesReport, InventoryReport, CustomerSummaryReport};
 use crate::locations::{self, Location};
+use crate::adapters::serpapi::{self, WebEvidence};
 use crate::ai::{self, AiResponse, KnowledgeEntry};
 use crate::utils;
 use std::sync::Mutex;
@@ -276,18 +277,56 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
                 fast_path_data = Some(ai::AssistantResult::LocalMatchFound(mr));
             }
             Ok(None) => {
-                println!("[Local Match] No match found. Proceeding to next steps.");
+                println!("[Local Match] No match found. Proceeding to web evidence + AI draft.");
                 let (api_key, model) = {
                     let conn = state.0.lock().unwrap();
                     let cfg = ai::get_ai_config(&conn)?;
                     (cfg.1.clone(), cfg.2.clone())
                 };
+
+                // Build search query from extraction text
+                let search_query = extraction.ocr_text.as_deref()
+                    .or(extraction.qr_data.as_deref())
+                    .unwrap_or("")
+                    .to_string();
+
+                // Fetch web evidence via SerpApi (best-effort)
+                let web_evidence: Option<WebEvidence> = if !search_query.is_empty() {
+                    // Try env var first, then settings table
+                    let serpapi_key = std::env::var("SERPAPI_API_KEY").ok()
+                        .filter(|k| !k.is_empty())
+                        .or_else(|| {
+                            get_setting_val(&state.0.lock().unwrap(), "serpapi_api_key").ok()
+                                .filter(|k| !k.is_empty())
+                        });
+                    match serpapi_key {
+                        Some(ref key) => {
+                            match serpapi::fetch_web_evidence(&search_query, key).await {
+                                Ok(evidence) => {
+                                    println!("[Web Evidence] Found {} results", evidence.result_count);
+                                    Some(evidence)
+                                }
+                                Err(e) => {
+                                    println!("[Web Evidence] Error: {}", e);
+                                    None
+                                }
+                            }
+                        }
+                        None => {
+                            println!("[Web Evidence] No SERPAPI_API_KEY configured. Skipping web search.");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 match crate::ai::catalog_composer::generate_catalog_draft(
-                    extraction, &Some(prompt.clone()), &api_key, &model
+                    extraction, &Some(prompt.clone()), &api_key, &model, &web_evidence
                 ).await {
                     Ok(draft) => {
-                        println!("[AI Draft] title={} brand={:?} fabric={:?} design_code={:?}",
-                            draft.title, draft.brand, draft.fabric, draft.design_code);
+                        println!("[AI Draft] title={} brand={:?} fabric={:?} design_code={:?} web_count={:?}",
+                            draft.title, draft.brand, draft.fabric, draft.design_code, draft.web_evidence_count);
                         fast_path_data = Some(ai::AssistantResult::NewCatalogDraft(draft));
                     }
                     Err(e) => {
