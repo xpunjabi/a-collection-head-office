@@ -67,6 +67,7 @@ fn main() {
             commands::add_location,
             commands::update_location,
             commands::save_product_draft_to_catalog,
+            commands::save_catalog_draft,
             commands::generate_marketing,
         ])
         .run(tauri::generate_context!())

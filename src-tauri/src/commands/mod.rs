@@ -411,6 +411,41 @@ pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai:
 }
 
 #[tauri::command]
+pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::catalog_composer::CatalogDraft) -> Result<i64, String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut tags = Vec::new();
+    if let Some(ref brand) = draft.brand {
+        if !brand.is_empty() { tags.push(format!("Brand: {}", brand)); }
+    }
+    if let Some(ref fabric) = draft.fabric {
+        if !fabric.is_empty() { tags.push(format!("Fabric: {}", fabric)); }
+    }
+    let product = crate::catalog::Product {
+        id: None,
+        sku: draft.design_code.clone().unwrap_or_default(),
+        name: draft.title,
+        category: None,
+        color: None,
+        design: draft.brand.clone(),
+        season: None,
+        cost_price: 0.0,
+        sale_price: 0.0,
+        purchase_price: 0.0,
+        description: draft.notes.clone(),
+        tags: if tags.is_empty() { None } else { Some(tags.join(", ")) },
+        stock_quantity: 0,
+        status: "active".to_string(),
+        images: "[]".to_string(),
+        supplier_id: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let conn = state.0.lock().unwrap();
+    let id = crate::catalog::add_product(&conn, &product).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
 pub async fn generate_marketing(state: State<'_, DbState>, product_id: i64) -> Result<Vec<ai::MarketingContent>, String> {
     let (product, provider, api_key, model, has_fb, has_wa) = {
         let conn = state.0.lock().unwrap();

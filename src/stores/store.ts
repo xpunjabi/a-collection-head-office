@@ -179,6 +179,7 @@ interface AppState {
   isAiLoading: boolean;
   sendAiMessage: (prompt: string, imageData?: string) => Promise<void>;
   clearAiChat: () => void;
+  removeAiMessage: (index: number) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -480,4 +481,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       ],
     }),
+  removeAiMessage: (index) => set((state) => ({
+    aiMessages: state.aiMessages.filter((_, i) => i !== index),
+  })),
 }));

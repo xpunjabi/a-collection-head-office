@@ -14,6 +14,7 @@ export default function Settings() {
   const [aiProvider, setAiProvider] = useState('gemini')
   const [apiKey, setApiKey] = useState('')
   const [aiModel, setAiModel] = useState('')
+  const [serpapiKey, setSerpapiKey] = useState('')
   const [backupPath, setBackupPath] = useState('')
   const [backupInterval, setBackupInterval] = useState('7')
   const [backupResult, setBackupResult] = useState('')
@@ -27,6 +28,7 @@ export default function Settings() {
     if (settings.ai_provider) setAiProvider(settings.ai_provider)
     if (settings.ai_api_key) setApiKey(settings.ai_api_key)
     if (settings.ai_model) setAiModel(settings.ai_model)
+    if (settings.serpapi_api_key) setSerpapiKey(settings.serpapi_api_key)
     if (settings.backup_path) setBackupPath(settings.backup_path)
     if (settings.backup_interval_days) setBackupInterval(settings.backup_interval_days)
   }, [settings])
@@ -36,6 +38,7 @@ export default function Settings() {
       await updateSetting('ai_provider', aiProvider)
       await updateSetting('ai_api_key', apiKey)
       await updateSetting('ai_model', aiModel)
+      await updateSetting('serpapi_api_key', serpapiKey)
       alert('AI settings saved successfully!')
     } catch (err) {
       alert(`Failed to save AI settings: ${err}`)
@@ -133,6 +136,21 @@ export default function Settings() {
               placeholder="E.g. gemini-1.5-flash, gpt-4o"
               className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">SerpApi API Key</label>
+            <div className="relative">
+              <Key className="absolute left-3 top-2.5 text-gray-500" size={16} />
+              <input
+                type="password"
+                value={serpapiKey}
+                onChange={(e) => setSerpapiKey(e.target.value)}
+                placeholder="Enter your SerpApi key..."
+                className="w-full bg-slate-950 border border-gray-800 rounded-lg pl-10 pr-4 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+              />
+            </div>
+            <p className="text-[10px] text-gray-600 mt-1">Used for web evidence search in AI catalog drafts. Get one at serpapi.com.</p>
           </div>
 
           <button

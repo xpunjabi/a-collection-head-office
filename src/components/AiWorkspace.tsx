@@ -2,9 +2,10 @@ import { useRef, useState, useCallback, useEffect } from 'react'
 import { useAppStore } from '../stores/store'
 import ProductDraftCard from './ProductDraftCard'
 import FormattedMessage from './FormattedMessage'
+import { invoke } from '@tauri-apps/api/core'
 import {
   Send, X, Plus, Image, Link2, FileText, Upload,
-  Trash2, GripVertical, Sparkles
+  Trash2, GripVertical, Sparkles, Check, Ban
 } from 'lucide-react'
 
 export default function AiWorkspace() {
@@ -12,7 +13,7 @@ export default function AiWorkspace() {
     aiMessages, isAiLoading, sendAiMessage, clearAiChat,
     showAiAssistant, setVectorAssistant,
     aiWorkspaceWidth, setAiWorkspaceWidth,
-    aiProductDrafts
+    aiProductDrafts, removeAiMessage
   } = useAppStore()
 
   const [inputText, setInputText] = useState('')
@@ -20,6 +21,8 @@ export default function AiWorkspace() {
   const [pendingImageName, setPendingImageName] = useState('')
   const [showMenu, setShowMenu] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+  const [savingIndex, setSavingIndex] = useState<number | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -28,6 +31,30 @@ export default function AiWorkspace() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [aiMessages])
+
+  useEffect(() => {
+    if (toast) {
+      const t = setTimeout(() => setToast(null), 3000)
+      return () => clearTimeout(t)
+    }
+  }, [toast])
+
+  const handleAddToCatalog = async (index: number, draft: import('../stores/store').CatalogDraft) => {
+    setSavingIndex(index)
+    try {
+      await invoke('save_catalog_draft', { draft })
+      setToast('Item added to catalog!')
+      removeAiMessage(index)
+    } catch (err) {
+      setToast(`Failed to save: ${err}`)
+    } finally {
+      setSavingIndex(null)
+    }
+  }
+
+  const handleDiscardDraft = (index: number) => {
+    removeAiMessage(index)
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -274,6 +301,24 @@ export default function AiWorkspace() {
                         Web Evidence: Found {msg.fast_path_data.data.web_evidence_count} matching result{msg.fast_path_data.data.web_evidence_count !== 1 ? 's' : ''} from internet search
                       </div>
                     )}
+                    <div className="flex items-center space-x-2 mt-2 pt-2 border-t border-violet-800/20">
+                      <button
+                        onClick={() => handleAddToCatalog(i, msg.fast_path_data!.data)}
+                        disabled={savingIndex === i}
+                        className="flex items-center space-x-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white rounded text-[11px] font-medium transition-colors"
+                      >
+                        <Check size={12} />
+                        <span>{savingIndex === i ? 'Saving...' : 'Add to Catalog'}</span>
+                      </button>
+                      <button
+                        onClick={() => handleDiscardDraft(i)}
+                        disabled={savingIndex === i}
+                        className="flex items-center space-x-1 px-2.5 py-1 bg-red-600/60 hover:bg-red-500/80 disabled:opacity-50 text-red-200 rounded text-[11px] font-medium transition-colors"
+                      >
+                        <Ban size={12} />
+                        <span>Discard</span>
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -292,6 +337,13 @@ export default function AiWorkspace() {
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Toast notification */}
+      {toast && (
+        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-30 bg-slate-950 border border-emerald-700/50 text-emerald-300 text-xs px-4 py-2 rounded-lg shadow-xl whitespace-nowrap">
+          {toast}
+        </div>
+      )}
 
       {/* Drag overlay */}
       {isDragging && (
