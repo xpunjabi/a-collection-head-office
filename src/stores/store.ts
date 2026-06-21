@@ -181,7 +181,7 @@ interface AppState {
   clearWorkspaceAssets: () => void;
 
   // AI Assistant Chat
-  aiMessages: { role: 'user' | 'assistant'; text: string; action?: string; product_draft?: ProductDraft; confidence?: number; missing_fields?: string[]; suggested_actions?: string[]; fast_path_data?: AssistantResult; social_post?: MarketingPost }[];
+  aiMessages: { role: 'user' | 'assistant'; text: string; action?: string; product_draft?: ProductDraft; confidence?: number; missing_fields?: string[]; suggested_actions?: string[]; fast_path_data?: AssistantResult; social_post?: MarketingPost; image_data?: string }[];
   isAiLoading: boolean;
   sendAiMessage: (prompt: string, imageData?: string) => Promise<void>;
   clearAiChat: () => void;
@@ -414,7 +414,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!prompt.trim() && !imageData) return;
 
     // Add user message to chat
-    const userMsg: any = { role: 'user', text: prompt || (imageData ? '[Image uploaded]' : '') };
+    const userMsg: any = { role: 'user', text: prompt || (imageData ? '[Image uploaded]' : ''), image_data: imageData || undefined };
     set((state) => ({
       aiMessages: [...state.aiMessages, userMsg],
       isAiLoading: true,
@@ -445,6 +445,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         missing_fields: response.missing_fields,
         suggested_actions: response.suggested_actions,
         fast_path_data: response.fast_path_data,
+        image_data: imageData || undefined,
       };
 
       set((state) => ({
