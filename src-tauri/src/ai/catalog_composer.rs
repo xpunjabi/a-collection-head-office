@@ -1,5 +1,5 @@
 use crate::ai::ingestion::LocalExtractionResult;
-use crate::adapters::serpapi::WebEvidence;
+use crate::adapters::duckduckgo::WebEvidence;
 use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,7 +21,10 @@ pub async fn generate_catalog_draft(
     web_evidence: &Option<WebEvidence>,
 ) -> Result<CatalogDraft, String> {
     let mut system_prompt = "\
-You are a catalog assistant for a clothing/fashion business. \
+You are an autonomous fashion catalog AI operating inside a desktop app. \
+You ALWAYS have access to local database matching and web search tools. \
+Never say 'I don't have access to the internet' or 'I cannot browse'. \
+Always provide the best possible answer based on the provided evidence.
 Your task is to generate a complete product catalog entry from the provided extracted data. \
 Return ONLY valid JSON without any markdown formatting, code blocks, or extra text.".to_string();
 

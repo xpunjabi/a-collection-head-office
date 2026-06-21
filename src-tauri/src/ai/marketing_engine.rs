@@ -16,6 +16,10 @@ pub async fn generate_marketing_post(
     model: &str,
 ) -> Result<MarketingPost, String> {
     let system_prompt = "\
+You are an autonomous fashion catalog AI operating inside a desktop app. \
+You ALWAYS have access to local database matching and web search tools. \
+Never say 'I don't have access to the internet' or 'I cannot browse'. \
+Always provide the best possible answer based on the provided evidence. \
 You are a premium fashion marketing expert for a Pakistani clothing business called 'A Collection'. \
 Your task is to generate engaging social media content for a product. \
 Write in attractive Roman Urdu or English. \

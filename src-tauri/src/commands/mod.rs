@@ -3,7 +3,7 @@ use crate::inventory::{self, InventorySummary, LowStockItem, DeadStockItem, Best
 use crate::customers::{self, Customer, OrderItemInput, OrderHistory};
 use crate::reports::{self, SalesReport, InventoryReport, CustomerSummaryReport};
 use crate::locations::{self, Location};
-use crate::adapters::serpapi::{self, WebEvidence};
+use crate::adapters::duckduckgo::{self, WebEvidence};
 use crate::ai::{self, AiResponse, KnowledgeEntry};
 use crate::utils;
 use std::sync::Mutex;
@@ -290,30 +290,15 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
                     .unwrap_or("")
                     .to_string();
 
-                // Fetch web evidence via SerpApi (best-effort)
+                // Fetch web evidence via DuckDuckGo (free, no API key needed)
                 let web_evidence: Option<WebEvidence> = if !search_query.is_empty() {
-                    // Try env var first, then settings table
-                    let serpapi_key = std::env::var("SERPAPI_API_KEY").ok()
-                        .filter(|k| !k.is_empty())
-                        .or_else(|| {
-                            get_setting_val(&state.0.lock().unwrap(), "serpapi_api_key").ok()
-                                .filter(|k| !k.is_empty())
-                        });
-                    match serpapi_key {
-                        Some(ref key) => {
-                            match serpapi::fetch_web_evidence(&search_query, key).await {
-                                Ok(evidence) => {
-                                    println!("[Web Evidence] Found {} results", evidence.result_count);
-                                    Some(evidence)
-                                }
-                                Err(e) => {
-                                    println!("[Web Evidence] Error: {}", e);
-                                    None
-                                }
-                            }
+                    match duckduckgo::fetch_web_evidence(&search_query).await {
+                        Ok(evidence) => {
+                            println!("[Web Evidence] Found {} results", evidence.result_count);
+                            Some(evidence)
                         }
-                        None => {
-                            println!("[Web Evidence] No SERPAPI_API_KEY configured. Skipping web search.");
+                        Err(e) => {
+                            println!("[Web Evidence] DuckDuckGo error: {}. Continuing with OCR text only.", e);
                             None
                         }
                     }

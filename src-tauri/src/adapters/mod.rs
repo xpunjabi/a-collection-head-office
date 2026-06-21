@@ -1,1 +1,1 @@
-pub mod serpapi;
+pub mod duckduckgo;
