@@ -225,51 +225,64 @@ pub async fn fetch_web_evidence(query: &str) -> Result<WebEvidence, String> {
     }
 
     let html = res.text().await.map_err(|e| format!("Failed to read response: {}", e))?;
-    let doc = Html::parse_document(&html);
 
-    let result_sel = Selector::parse(".result").map_err(|e| format!("Selector error: {}", e))?;
-    let title_sel = Selector::parse(".result__title a").map_err(|e| format!("Selector error: {}", e))?;
-    let snippet_sel = Selector::parse(".result__snippet").map_err(|e| format!("Selector error: {}", e))?;
+    // NOTE: `scraper::Html` is NOT `Send` (it internally uses tendril::Tendril which
+    // contains a `Cell<usize>` refcount). Tauri commands require `Send` futures, so we
+    // must scope all `Html` usage to a block that ends BEFORE any subsequent `.await`.
+    // We extract everything we need into `Send`-safe Vec<String> values here.
+    let (titles, snippets, mut image_urls, result_page_urls) = {
+        let doc = Html::parse_document(&html);
 
-    let mut titles = Vec::new();
-    let mut snippets = Vec::new();
+        let result_sel = Selector::parse(".result").map_err(|e| format!("Selector error: {}", e))?;
+        let title_sel = Selector::parse(".result__title a").map_err(|e| format!("Selector error: {}", e))?;
+        let snippet_sel = Selector::parse(".result__snippet").map_err(|e| format!("Selector error: {}", e))?;
 
-    for result in doc.select(&result_sel).take(5) {
-        if let Some(title_el) = result.select(&title_sel).next() {
-            let title = title_el.text().collect::<String>().trim().to_string();
-            if !title.is_empty() {
-                titles.push(title);
+        let mut titles = Vec::new();
+        let mut snippets = Vec::new();
+
+        for result in doc.select(&result_sel).take(5) {
+            if let Some(title_el) = result.select(&title_sel).next() {
+                let title = title_el.text().collect::<String>().trim().to_string();
+                if !title.is_empty() {
+                    titles.push(title);
+                }
+            }
+            if let Some(snippet_el) = result.select(&snippet_sel).next() {
+                let snippet = snippet_el.text().collect::<String>().trim().to_string();
+                if !snippet.is_empty() {
+                    snippets.push(snippet);
+                }
             }
         }
-        if let Some(snippet_el) = result.select(&snippet_sel).next() {
-            let snippet = snippet_el.text().collect::<String>().trim().to_string();
-            if !snippet.is_empty() {
-                snippets.push(snippet);
-            }
-        }
-    }
 
-    // --- Image URL collection ---
-    // Step 1: scrape <img> tags scoped to .result blocks (not global), with stricter filters.
-    let mut image_urls: Vec<String> = Vec::new();
-    if let Ok(img_sel) = Selector::parse(".result img") {
-        for img in doc.select(&img_sel) {
-            if image_urls.len() >= 5 {
-                break;
-            }
-            if let Some(src) = img.value().attr("src") {
-                if let Some(normalized) = normalize_url(src) {
-                    if !is_trivial_image_url(&normalized) && !image_urls.contains(&normalized) {
-                        image_urls.push(normalized);
+        // --- Image URL collection ---
+        // Step 1: scrape <img> tags scoped to .result blocks (not global), with stricter filters.
+        let mut image_urls: Vec<String> = Vec::new();
+        if let Ok(img_sel) = Selector::parse(".result img") {
+            for img in doc.select(&img_sel) {
+                if image_urls.len() >= 5 {
+                    break;
+                }
+                if let Some(src) = img.value().attr("src") {
+                    if let Some(normalized) = normalize_url(src) {
+                        if !is_trivial_image_url(&normalized) && !image_urls.contains(&normalized) {
+                            image_urls.push(normalized);
+                        }
                     }
                 }
             }
         }
-    }
 
-    // Step 2: fetch top 3 result pages and extract og:image / twitter:image meta tags.
+        // Step 2 (prepare): extract top 3 result page URLs for og:image fetching.
+        // The actual HTTP fetch happens OUTSIDE this block (after `doc` is dropped).
+        let result_page_urls = extract_result_page_urls(&doc, 3);
+
+        (titles, snippets, image_urls, result_page_urls)
+        // `doc` is dropped here — safe to `.await` after this point.
+    };
+
+    // Step 2 (execute): fetch top 3 result pages and extract og:image / twitter:image meta tags.
     // This is the PRIMARY source of real product photos — DDG HTML page itself only has favicons.
-    let result_page_urls = extract_result_page_urls(&doc, 3);
     if !result_page_urls.is_empty() {
         let og_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
