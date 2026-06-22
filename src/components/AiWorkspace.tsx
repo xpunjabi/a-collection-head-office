@@ -8,6 +8,55 @@ import {
   Trash2, GripVertical, Sparkles, Check, Ban, Copy, Sparkle
 } from 'lucide-react'
 
+/**
+ * Renders a remote web image with graceful fallback to a base64-uploaded image
+ * if the remote URL fails to load (404, 403 hotlink-protected, expired params,
+ * CORS-blocked, etc). Also resets on `src` change so a stale error state from
+ * a previous URL does not poison the next render.
+ *
+ * `referrerPolicy="no-referrer"` is critical: many e-commerce sites hotlink-
+ * protect their images and return 403 if the Referer header is from a desktop
+ * app rather than their own domain.
+ */
+function WebImageWithFallback({
+  src,
+  fallbackBase64,
+  className,
+}: {
+  src: string
+  fallbackBase64?: string | null
+  className?: string
+}) {
+  const [errored, setErrored] = useState(false)
+
+  useEffect(() => {
+    setErrored(false)
+  }, [src])
+
+  if (errored) {
+    if (fallbackBase64) {
+      return (
+        <img
+          src={`data:image/jpeg;base64,${fallbackBase64}`}
+          alt="Product thumbnail"
+          className={className}
+        />
+      )
+    }
+    return null
+  }
+
+  return (
+    <img
+      src={src}
+      alt="Product from web"
+      className={className}
+      onError={() => setErrored(true)}
+      referrerPolicy="no-referrer"
+    />
+  )
+}
+
 export default function AiWorkspace() {
   const {
     aiMessages, isAiLoading, sendAiMessage, clearAiChat,
@@ -356,11 +405,17 @@ export default function AiWorkspace() {
                 {msg.fast_path_data.type === 'NewCatalogDraft' && (
                   <div className="bg-violet-900/30 border border-violet-700/30 rounded-lg px-3 py-2 text-xs space-y-1">
                     <div className="flex items-start space-x-2 mb-1">
-                      {/* Show web image if available, otherwise fallback to uploaded image */}
+                      {/* Show web image if available, otherwise fallback to uploaded image.
+                          WebImageWithFallback handles broken/404 web URLs by silently
+                          falling back to the user-uploaded image_data. */}
                       {msg.fast_path_data.data.best_image_url ? (
-                        <img src={msg.fast_path_data.data.best_image_url} alt="" className="w-10 h-10 rounded object-cover shrink-0 border border-violet-700/30" />
+                        <WebImageWithFallback
+                          src={msg.fast_path_data.data.best_image_url}
+                          fallbackBase64={msg.image_data}
+                          className="w-10 h-10 rounded object-cover shrink-0 border border-violet-700/30"
+                        />
                       ) : msg.image_data ? (
-                        <img src={`data:image/jpeg;base64,${msg.image_data}`} alt="" className="w-10 h-10 rounded object-cover shrink-0 border border-violet-700/30" />
+                        <img src={`data:image/jpeg;base64,${msg.image_data}`} alt="Product thumbnail" className="w-10 h-10 rounded object-cover shrink-0 border border-violet-700/30" />
                       ) : null}
                       <div className="text-violet-300 font-semibold">Catalog Draft</div>
                     </div>
