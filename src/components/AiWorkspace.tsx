@@ -356,9 +356,12 @@ export default function AiWorkspace() {
                 {msg.fast_path_data.type === 'NewCatalogDraft' && (
                   <div className="bg-violet-900/30 border border-violet-700/30 rounded-lg px-3 py-2 text-xs space-y-1">
                     <div className="flex items-start space-x-2 mb-1">
-                      {msg.image_data && (
+                      {/* Show web image if available, otherwise fallback to uploaded image */}
+                      {msg.fast_path_data.data.best_image_url ? (
+                        <img src={msg.fast_path_data.data.best_image_url} alt="" className="w-10 h-10 rounded object-cover shrink-0 border border-violet-700/30" />
+                      ) : msg.image_data ? (
                         <img src={`data:image/jpeg;base64,${msg.image_data}`} alt="" className="w-10 h-10 rounded object-cover shrink-0 border border-violet-700/30" />
-                      )}
+                      ) : null}
                       <div className="text-violet-300 font-semibold">Catalog Draft</div>
                     </div>
                     <div className="text-gray-300">

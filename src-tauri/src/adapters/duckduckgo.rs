@@ -6,6 +6,7 @@ use std::time::Duration;
 pub struct WebEvidence {
     pub titles: Vec<String>,
     pub snippets: Vec<String>,
+    pub image_urls: Vec<String>,
     pub result_count: usize,
 }
 
@@ -54,6 +55,30 @@ pub async fn fetch_web_evidence(query: &str) -> Result<WebEvidence, String> {
         }
     }
 
+    // Scrape image URLs from all <img> tags in the HTML
+    let img_sel = Selector::parse("img").map_err(|e| format!("Selector error: {}", e))?;
+    let mut image_urls = Vec::new();
+    
+    for img in doc.select(&img_sel) {
+        if let Some(src) = img.value().attr("src") {
+            let url = src.trim().to_string();
+            
+            // Filter out trivial icons/logos
+            if !url.is_empty() 
+                && url.starts_with("http") 
+                && !url.contains("favicon")
+                && !url.contains("logo")
+                && !url.contains("icon")
+                && !url.contains("spacer")
+                && !url.contains("pixel")
+                && !url.contains("tracking")
+                && image_urls.len() < 5 {
+                
+                image_urls.push(url);
+            }
+        }
+    }
+
     let result_count = titles.len();
-    Ok(WebEvidence { titles, snippets, result_count })
+    Ok(WebEvidence { titles, snippets, image_urls, result_count })
 }

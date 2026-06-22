@@ -11,6 +11,7 @@ pub struct CatalogDraft {
     pub notes: Option<String>,
     pub web_evidence_count: Option<usize>,
     pub web_evidence_snippets: Option<Vec<String>>,
+    pub best_image_url: Option<String>,
 }
 
 pub async fn generate_catalog_draft(
@@ -40,11 +41,19 @@ Return ONLY valid JSON without any markdown formatting, code blocks, or extra te
                 system_prompt.push_str(&format!("  *Snippet:* {}\n", snippet));
             }
         }
+        
+        // Add image URLs to the prompt
+        if !we.image_urls.is_empty() {
+            system_prompt.push_str("\n\n## Image URLs (from internet search)\n\nYou are also provided with image URLs found from the web search. Select the single best image URL that matches the product. Return this URL in the JSON as 'best_image_url'.\n");
+            for (i, url) in we.image_urls.iter().enumerate() {
+                system_prompt.push_str(&format!("\n- Image {}: {}\n", i + 1, url));
+            }
+        }
     }
 
     system_prompt.push_str("\n\nRespond with this exact JSON structure (no markdown, no explanation):\n\
 {\"title\": \"...\", \"brand\": \"... or null\", \"fabric\": \"... or null\", \
-\"design_code\": \"... or null\", \"notes\": \"... or null\"}");
+\"design_code\": \"... or null\", \"notes\": \"... or null\", \"best_image_url\": \"... or null\"}");
 
     let mut user_prompt = String::from("Generate a product catalog entry from the following extracted data:\n");
     if let Some(ref qr) = extraction.qr_data {
