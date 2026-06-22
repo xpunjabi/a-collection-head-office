@@ -85,6 +85,7 @@ export interface CatalogDraft {
   notes?: string;
   web_evidence_count?: number;
   web_evidence_snippets?: string[];
+  best_image_url?: string;
 }
 
 export type AssistantResult =
