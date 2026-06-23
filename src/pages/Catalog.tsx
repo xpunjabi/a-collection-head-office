@@ -1,12 +1,17 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { useAppStore, Product } from '../stores/store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
-import { 
+import {
   Search, Download, Upload, Plus, Edit, Trash2, Image as ImageIcon,
-  X, Palette, MapPin
+  X, Palette, MapPin, Share2, ChevronDown, CheckSquare, Square,
+  MessageCircle, Facebook, Instagram, Twitter
 } from 'lucide-react'
 import ProductImage from '../components/ProductImage'
+import {
+  shareToPlatform, buildProductShareText,
+  ALL_SHARE_PLATFORMS, PLATFORM_LABELS, SharePlatform
+} from '../utils/share'
 
 interface LocationStock {
   location_id: number;
@@ -46,7 +51,83 @@ export default function Catalog() {
   const [status, setStatus] = useState('active')
   const [images, setImages] = useState<string[]>([])
 
+  // Multi-select + per-row share dropdown state
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [openShareMenuFor, setOpenShareMenuFor] = useState<number | null>(null)
+  const [bulkShareOpen, setBulkShareOpen] = useState(false)
+  const shareMenuRef = useRef<HTMLDivElement>(null)
+  const bulkShareRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => { fetchProducts() }, [])
+
+  // Close share menus when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) {
+        setOpenShareMenuFor(null)
+      }
+      if (bulkShareRef.current && !bulkShareRef.current.contains(e.target as Node)) {
+        setBulkShareOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    setSelectedIds(prev => {
+      if (prev.size === filteredProducts.length) return new Set()
+      return new Set(filteredProducts.filter(p => p.id).map(p => p.id!))
+    })
+  }
+
+  const clearSelection = () => setSelectedIds(new Set())
+
+  const handleShareProduct = (p: Product, platform: SharePlatform) => {
+    // Product type doesn't have retail_price as a typed field, but the DB
+    // schema does store it. Read it via optional cast for the discount calc.
+    const retailPrice = (p as Product & { retail_price?: number }).retail_price ?? null
+    const text = buildProductShareText({
+      name: p.name,
+      design: p.design,
+      salePrice: p.sale_price,
+      retailPrice,
+      description: p.description,
+      hashtags: p.tags ? (() => { try { return JSON.parse(p.tags) } catch { return null } })() : null,
+      includeHashtags: true,
+    })
+    shareToPlatform(platform, text)
+    setOpenShareMenuFor(null)
+  }
+
+  const handleBulkShare = (platform: SharePlatform) => {
+    const selected = products.filter(p => p.id && selectedIds.has(p.id))
+    if (selected.length === 0) return
+    // Build a combined message: each product on its own block, separated by ---
+    const blocks = selected.map((p, idx) => {
+      const retailPrice = (p as Product & { retail_price?: number }).retail_price ?? null
+      const text = buildProductShareText({
+        name: p.name,
+        design: p.design,
+        salePrice: p.sale_price,
+        retailPrice,
+        description: p.description,
+      })
+      return `${idx + 1}. ${text}`
+    })
+    const combined = blocks.join('\n\n---\n\n')
+    shareToPlatform(platform, combined)
+    setBulkShareOpen(false)
+  }
 
   const handleOpenAdd = async () => {
     setEditProduct(null)
@@ -231,12 +312,67 @@ export default function Catalog() {
         </div>
       </div>
 
+      {/* Bulk action bar — visible when any rows are selected */}
+      {selectedIds.size > 0 && (
+        <div className="glass-card p-3 mb-4 flex items-center justify-between flex-wrap gap-3 border-violet-500/30">
+          <div className="flex items-center space-x-3">
+            <span className="text-sm text-violet-300 font-semibold">
+              {selectedIds.size} selected
+            </span>
+            <button
+              onClick={clearSelection}
+              className="text-xs text-gray-400 hover:text-white underline"
+            >
+              Clear
+            </button>
+          </div>
+          <div className="flex items-center space-x-2 relative" ref={bulkShareRef}>
+            <button
+              onClick={() => setBulkShareOpen(o => !o)}
+              className="flex items-center space-x-1 px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-xs font-medium transition-colors"
+            >
+              <Share2 size={12} />
+              <span>Share Selected</span>
+              <ChevronDown size={10} />
+            </button>
+            {bulkShareOpen && (
+              <div className="absolute top-full right-0 mt-1 z-20 bg-slate-900 border border-gray-800 rounded-lg shadow-2xl py-1 min-w-[160px]">
+                {ALL_SHARE_PLATFORMS.map(plat => (
+                  <button
+                    key={plat}
+                    onClick={() => handleBulkShare(plat)}
+                    className="w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-slate-800 hover:text-white flex items-center space-x-2"
+                  >
+                    {plat === 'whatsapp' && <MessageCircle size={12} className="text-emerald-400" />}
+                    {plat === 'facebook' && <Facebook size={12} className="text-blue-400" />}
+                    {plat === 'instagram' && <Instagram size={12} className="text-pink-400" />}
+                    {plat === 'twitter/x' && <Twitter size={12} className="text-sky-400" />}
+                    <span>{PLATFORM_LABELS[plat]}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Table */}
       <div className="glass-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-gray-800 bg-slate-900/50 text-xs font-semibold uppercase text-gray-400">
+                <th className="py-3 px-3 w-10 text-center">
+                  <button
+                    onClick={toggleSelectAll}
+                    title={selectedIds.size === filteredProducts.length && filteredProducts.length > 0 ? 'Deselect all' : 'Select all'}
+                    className="text-gray-400 hover:text-violet-400 transition-colors"
+                  >
+                    {selectedIds.size === filteredProducts.length && filteredProducts.length > 0
+                      ? <CheckSquare size={14} />
+                      : <Square size={14} />}
+                  </button>
+                </th>
                 <th className="py-3 px-3">Product</th>
                 <th className="py-3 px-3">Code</th>
                 <th className="py-3 px-3">Category</th>
@@ -250,9 +386,25 @@ export default function Catalog() {
             </thead>
             <tbody className="divide-y divide-gray-800 text-sm text-gray-300">
               {filteredProducts.length === 0 ? (
-                  <tr><td colSpan={9} className="py-10 text-center text-gray-500">No products found.</td></tr>
-              ) : filteredProducts.map(p => (
-                  <tr key={p.id} onClick={() => p.id && handleOpenEdit(p)} className="hover:bg-slate-900/20 transition-colors cursor-pointer">
+                  <tr><td colSpan={10} className="py-10 text-center text-gray-500">No products found.</td></tr>
+              ) : filteredProducts.map(p => {
+                const isSelected = p.id != null && selectedIds.has(p.id)
+                return (
+                  <tr
+                    key={p.id}
+                    onClick={() => p.id && handleOpenEdit(p)}
+                    className={`hover:bg-slate-900/20 transition-colors cursor-pointer ${isSelected ? 'bg-violet-900/10' : ''}`}
+                  >
+                  <td className="py-3 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                    {p.id != null && (
+                      <button
+                        onClick={() => toggleSelect(p.id as number)}
+                        className="text-gray-400 hover:text-violet-400 transition-colors"
+                      >
+                        {isSelected ? <CheckSquare size={14} className="text-violet-400" /> : <Square size={14} />}
+                      </button>
+                    )}
+                  </td>
                   <td className="py-3 px-3">
                     <div className="flex items-center space-x-3">
                       <div className="w-9 h-9 bg-slate-800 rounded-lg flex items-center justify-center overflow-hidden border border-gray-700 shrink-0">
@@ -282,14 +434,49 @@ export default function Catalog() {
                   <td className="py-3 px-3 text-right font-mono text-xs">Rs.{p.purchase_price?.toFixed(0) || p.cost_price.toFixed(0)}</td>
                   <td className="py-3 px-3 text-right font-mono text-xs text-violet-400">Rs.{p.sale_price.toFixed(0)}</td>
                   <td className={`py-3 px-3 text-center font-bold text-xs ${p.stock_quantity <= 5 ? 'text-red-400' : 'text-gray-300'}`}>{p.stock_quantity}</td>
-                  <td className="py-3 px-3 text-center">
+                  <td className="py-3 px-3 text-center" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center space-x-2">
-                      <button onClick={(e) => { e.stopPropagation(); p.id && handleOpenEdit(p); }} className="p-1 hover:text-violet-400"><Edit size={14} /></button>
-                      <button onClick={(e) => { e.stopPropagation(); p.id && handleDelete(p.id); }} className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); p.id && handleOpenEdit(p); }} className="p-1 hover:text-violet-400" title="Edit"><Edit size={14} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); p.id && handleDelete(p.id); }} className="p-1 hover:text-red-400" title="Delete"><Trash2 size={14} /></button>
+                      {/* Per-row share dropdown */}
+                      <div className="relative" ref={openShareMenuFor === p.id ? shareMenuRef : undefined}>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const id = p.id as number
+                            setOpenShareMenuFor(openShareMenuFor === id ? null : id)
+                          }}
+                          className="p-1 hover:text-emerald-400 transition-colors"
+                          title="Share"
+                        >
+                          <Share2 size={14} />
+                        </button>
+                        {openShareMenuFor === p.id && (
+                          <div className="absolute top-full right-0 mt-1 z-20 bg-slate-900 border border-gray-800 rounded-lg shadow-2xl py-1 min-w-[160px]">
+                            {ALL_SHARE_PLATFORMS.map(plat => (
+                              <button
+                                key={plat}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleShareProduct(p, plat)
+                                }}
+                                className="w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-slate-800 hover:text-white flex items-center space-x-2"
+                              >
+                                {plat === 'whatsapp' && <MessageCircle size={12} className="text-emerald-400" />}
+                                {plat === 'facebook' && <Facebook size={12} className="text-blue-400" />}
+                                {plat === 'instagram' && <Instagram size={12} className="text-pink-400" />}
+                                {plat === 'twitter/x' && <Twitter size={12} className="text-sky-400" />}
+                                <span>{PLATFORM_LABELS[plat]}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

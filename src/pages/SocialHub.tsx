@@ -1,16 +1,17 @@
 import { useState, useEffect } from 'react'
 import { useAppStore } from '../stores/store'
 import { invoke } from '@tauri-apps/api/core'
-import { 
-  Instagram, 
-  Sparkles, 
-  Hash, 
-  Save, 
+import {
+  Instagram,
+  Sparkles,
+  Hash,
+  Save,
   Trash2,
   Share2,
   ExternalLink,
   Brain
 } from 'lucide-react'
+import { shareToPlatform } from '../utils/share'
 
 interface SocialDraft {
   id: string;
@@ -151,26 +152,9 @@ Tags: ${product.tags || ''}`
   }
 
   const handleShare = (platform: string, text: string) => {
-    const encoded = encodeURIComponent(text)
-    let url = ''
-    switch (platform.toLowerCase()) {
-      case 'whatsapp':
-        url = `https://wa.me/?text=${encoded}`
-        break
-      case 'facebook':
-        url = `https://www.facebook.com/sharer/sharer.php?quote=${encoded}`
-        break
-      case 'twitter/x':
-        url = `https://twitter.com/intent/tweet?text=${encoded}`
-        break
-      case 'instagram':
-        navigator.clipboard.writeText(text)
-        alert('Instagram caption copied to clipboard! Paste it in Instagram to share.')
-        return
-      default:
-        return
-    }
-    window.open(url, '_blank')
+    // Delegate to the shared util. Lowercase the platform name to match the
+    // SharePlatform union type ('whatsapp' | 'facebook' | 'twitter/x' | 'instagram').
+    shareToPlatform(platform.toLowerCase() as any, text)
   }
 
   const handleSaveToKnowledge = async (content: string, topic: string) => {
