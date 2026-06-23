@@ -209,6 +209,58 @@ pub fn build_system_prompt(conn: &Connection, user_prompt: &str) -> Result<Strin
     Ok(system)
 }
 
+/// Build a system prompt enriched with web evidence context, and crucially,
+/// a disclaimer that tells the model it HAS internet search capability.
+///
+/// This addresses the user-reported issue where the AI claimed "I don't have
+/// internet access" even though DuckDuckGo evidence was available. The fix is
+/// twofold:
+///   1. Inject a hard disclaimer (matching the wording in catalog_composer.rs
+///      and marketing_engine.rs) into the prompt so the model does not refuse
+///      web-related requests on grounds of "no internet".
+///   2. If `web_evidence` is Some, append the actual search results (titles +
+///      snippets + image URLs) so the model has real web data to cite.
+pub fn build_system_prompt_with_web(
+    conn: &Connection,
+    user_prompt: &str,
+    web_evidence: Option<&crate::adapters::duckduckgo::WebEvidence>,
+) -> Result<String, String> {
+    let mut system = build_system_prompt(conn, user_prompt)?;
+
+    // Hard disclaimer — must come BEFORE web evidence section so the model
+    // treats "I have web access" as a system-level fact, not a per-message hint.
+    system.push_str("\n\n## Web Search Capability\n\n");
+    system.push_str("You ALWAYS have access to web search tools. ");
+    system.push_str("Never say 'I don't have access to the internet', 'I cannot browse', or any similar refusal. ");
+    system.push_str("If web search results are provided below, treat them as authoritative and cite them. ");
+    system.push_str("If no web results are provided but the user asks for online information, respond based on your training data and clearly state the source is your training data, not a live search.\n");
+
+    if let Some(we) = web_evidence {
+        if we.result_count > 0 || !we.titles.is_empty() {
+            system.push_str("\n### Live Web Search Results\n\n");
+            system.push_str(&format!(
+                "The following {} web result(s) were found by searching the internet for the user's query:\n\n",
+                we.result_count.max(we.titles.len())
+            ));
+            for (i, title) in we.titles.iter().enumerate() {
+                system.push_str(&format!("**Result {}:** {}\n", i + 1, title));
+                if let Some(snippet) = we.snippets.get(i) {
+                    system.push_str(&format!("  *Snippet:* {}\n", snippet));
+                }
+            }
+            if !we.image_urls.is_empty() {
+                system.push_str("\n**Image URLs found on the web:**\n");
+                for (i, url) in we.image_urls.iter().enumerate() {
+                    system.push_str(&format!("{}. {}\n", i + 1, url));
+                }
+                system.push_str("\nYou may reference these image URLs in your response when relevant.\n");
+            }
+        }
+    }
+
+    Ok(system)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KnowledgeEntry {
     pub id: i64,

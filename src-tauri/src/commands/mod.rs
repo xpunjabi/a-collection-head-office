@@ -363,9 +363,35 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
         return Err("AI API key is missing. Please configure it in Settings.".to_string());
     }
 
+    // Fetch web evidence for the FALLBACK path too. Previously web evidence was
+    // only fetched for the fast path (catalog_composer). The fallback path
+    // (which runs for text-only queries like "internet se photo laao") had no
+    // web access, so Gemini truthfully replied "I don't have internet access".
+    //
+    // Now we fetch web evidence using the user's text prompt and inject it into
+    // the system prompt via build_system_prompt_with_web. We also inject a
+    // hard disclaimer so the model does not refuse web-related queries.
+    //
+    // Skip web fetch for empty prompts (defensive — ask_ai already returns
+    // early if both prompt and image are empty).
+    let fallback_web_evidence: Option<WebEvidence> = if !prompt.trim().is_empty() {
+        match duckduckgo::fetch_web_evidence(&prompt).await {
+            Ok(evidence) => {
+                println!("[Fallback Web Evidence] Found {} results for query '{}'", evidence.result_count, prompt);
+                Some(evidence)
+            }
+            Err(e) => {
+                println!("[Fallback Web Evidence] DuckDuckGo error: {}. Continuing without web evidence.", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let system_prompt = {
         let conn = state.0.lock().unwrap();
-        let mut sp = ai::build_system_prompt(&conn, &prompt)?;
+        let mut sp = ai::build_system_prompt_with_web(&conn, &prompt, fallback_web_evidence.as_ref())?;
         sp.push_str("\n\n## Product Intake Mode\n\nWhen the user shares a product image, link, code, or description, you MUST:\n1. Analyze all available information\n2. If product information is detected, return a JSON block at the end of your response:\n\n```json\n{\n  \"draft\": {\n    \"name\": \"...\",\n    \"sku\": \"...\",\n    \"category\": \"...\",\n    \"brand\": \"...\",\n    \"fabric\": \"...\",\n    \"color\": \"...\",\n    \"design\": \"...\",\n    \"season\": \"...\",\n    \"cost_price\": 0.0,\n    \"sale_price\": 0.0,\n    \"retail_price\": 0.0,\n    \"description\": \"...\",\n    \"tags\": [\"...\"],\n    \"keywords\": [\"...\"],\n    \"hashtags\": [\"...\"]\n  },\n  \"confidence\": 0.85,\n  \"missing_fields\": [\"stock_location\", \"purchase_cost\"],\n  \"suggested_actions\": [\"Add To Catalog\", \"Edit Draft\", \"Generate Marketing\"]\n}\n```\n\n3. If no product information is detected, respond normally as a business assistant.\n");
         sp
     };
