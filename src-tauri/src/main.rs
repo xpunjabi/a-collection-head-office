@@ -70,6 +70,7 @@ fn main() {
             commands::save_catalog_draft,
             commands::generate_social_post,
             commands::generate_marketing,
+            commands::init_database,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { MapPin, Plus, X } from 'lucide-react'
+import { MapPin, Plus, X, RefreshCw } from 'lucide-react'
 
 interface Location {
   id?: number;
@@ -16,6 +16,7 @@ export default function LocationsPage() {
   const [editLoc, setEditLoc] = useState<Location | null>(null)
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
+  const [syncing, setSyncing] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -36,6 +37,10 @@ export default function LocationsPage() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!name.trim()) {
+      alert('Location name is required.')
+      return
+    }
     try {
       if (editLoc?.id) {
         await invoke('update_location', { id: editLoc.id, name, address, isActive: true })
@@ -44,7 +49,15 @@ export default function LocationsPage() {
       }
       setShowModal(false)
       await load()
-    } catch (err) { alert(`Error: ${err}`) }
+    } catch (err) {
+      // Improve error UX for UNIQUE constraint violations on name
+      const msg = String(err)
+      if (msg.toLowerCase().includes('unique') || msg.toLowerCase().includes('constraint')) {
+        alert(`A location with name "${name}" already exists. Please use a different name.`)
+      } else {
+        alert(`Error: ${err}`)
+      }
+    }
   }
 
   const handleToggle = async (l: Location) => {
@@ -55,6 +68,25 @@ export default function LocationsPage() {
     } catch (err) { alert(err) }
   }
 
+  // Manual trigger to re-run migrations (which includes the
+  // sync_sales_areas_to_locations step). Useful when the user has just
+  // updated their business_profile.sales_areas in Settings and wants the
+  // new locations to appear without restarting the app.
+  const handleSyncFromProfile = async () => {
+    setSyncing(true)
+    try {
+      // The init_database command runs run_migrations which calls
+      // sync_sales_areas_to_locations. We re-invoke it to trigger the sync.
+      await invoke('init_database')
+      await load()
+      alert('Synced locations from Business Profile sales_areas.')
+    } catch (err) {
+      alert(`Sync failed: ${err}`)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -62,9 +94,29 @@ export default function LocationsPage() {
           <h1 className="text-3xl font-bold tracking-tight text-white font-display">Locations</h1>
           <p className="text-sm text-gray-400 mt-1">Manage stock locations (shops, agents, office).</p>
         </div>
-        <button onClick={handleOpenAdd} className="flex items-center space-x-1 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium">
-          <Plus size={16} /><span>Add Location</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handleSyncFromProfile}
+            disabled={syncing}
+            title="Import any new locations defined in your Business Profile (sales_areas)"
+            className="flex items-center space-x-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg text-sm font-medium disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+            <span>{syncing ? 'Syncing...' : 'Sync from Profile'}</span>
+          </button>
+          <button onClick={handleOpenAdd} className="flex items-center space-x-1 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium">
+            <Plus size={16} /><span>Add Location</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="glass-card p-3 text-xs text-gray-400 flex items-start space-x-2">
+        <MapPin size={14} className="text-violet-400 mt-0.5 shrink-0" />
+        <div>
+          Locations are automatically synced from your <strong className="text-violet-300">Business Profile → Sales Areas</strong> on every app startup.
+          If you add a new sales area in Settings, click <strong className="text-violet-300">Sync from Profile</strong> to import it immediately (no restart needed).
+          You can also add custom locations individually using <strong className="text-violet-300">Add Location</strong>.
+        </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">

@@ -13,6 +13,16 @@ pub fn init_db<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
 }
 
 fn run_migrations(conn: &mut Connection) -> Result<()> {
+    run_migrations_impl(conn)
+}
+
+/// Public wrapper around run_migrations so the `init_database` Tauri command
+/// can trigger a re-sync of sales_areas -> locations without an app restart.
+pub fn run_migrations_public(conn: &mut Connection) -> Result<()> {
+    run_migrations_impl(conn)
+}
+
+fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
     conn.execute("PRAGMA foreign_keys = ON;", [])?;
 
     // Existing tables (from before)
@@ -150,6 +160,9 @@ fn run_migrations(conn: &mut Connection) -> Result<()> {
     seed_initial_data(conn)?;
     ensure_business_profile(conn)?;
     seed_locations(conn)?;
+    // Issue #6 fix: sync business_profile.sales_areas into locations table
+    // on every startup. Idempotent — only inserts missing rows.
+    sync_sales_areas_to_locations(conn)?;
     Ok(())
 }
 
@@ -221,9 +234,67 @@ fn seed_locations(conn: &Connection) -> Result<()> {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM locations", [], |r| r.get(0)).unwrap_or(0);
     if count == 0 {
         let now = chrono::Utc::now().to_rfc3339();
+        // Issue #6 fix: derive seed locations from DEFAULT_PROFILE.sales_areas
+        // rather than hardcoding a separate 2-entry list. The business profile
+        // already lists 4 sales_areas (Narowal, Shakargarh, Zafarwal, Nearby
+        // Villages), and those should be the initial Location entries.
+        if let Ok(profile) = serde_json::from_str::<serde_json::Value>(DEFAULT_PROFILE) {
+            if let Some(areas) = profile["sales_areas"].as_array() {
+                for area in areas {
+                    if let Some(name) = area.as_str() {
+                        let _ = conn.execute(
+                            "INSERT OR IGNORE INTO locations (name, address, created_at) VALUES (?1, ?2, ?3)",
+                            rusqlite::params![name, "", &now],
+                        );
+                    }
+                }
+                // Also add a "Head Office" entry as the operational base.
+                let _ = conn.execute(
+                    "INSERT OR IGNORE INTO locations (name, address, created_at) VALUES (?1, ?2, ?3)",
+                    rusqlite::params!["Head Office", "Main Office", &now],
+                );
+                return Ok(());
+            }
+        }
+        // Fallback if profile parsing failed for any reason
         let locs = [("Head Office", "Main Office"), ("Shakargarh Shop", "Shakargarh City")];
         for (name, addr) in &locs {
             conn.execute("INSERT INTO locations (name, address, created_at) VALUES (?1, ?2, ?3)", rusqlite::params![name, addr, &now])?;
+        }
+    }
+    Ok(())
+}
+
+/// Issue #6 fix: one-time migration that syncs `business_profile.sales_areas`
+/// into the `locations` table. Any sales_area name not already in `locations`
+/// is inserted (preserving existing rows). This runs on every startup via
+/// run_migrations but only inserts missing rows — idempotent.
+fn sync_sales_areas_to_locations(conn: &Connection) -> Result<()> {
+    let profile_val: Result<String, _> = conn.query_row(
+        "SELECT value FROM settings WHERE key = 'business_profile'", [], |row| row.get(0),
+    );
+    let profile_str = match profile_val {
+        Ok(s) => s,
+        Err(_) => return Ok(()), // no business_profile setting yet — skip
+    };
+    let profile: serde_json::Value = match serde_json::from_str(&profile_str) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    let areas = match profile["sales_areas"].as_array() {
+        Some(a) => a,
+        None => return Ok(()),
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    for area in areas {
+        if let Some(name) = area.as_str() {
+            // INSERT OR IGNORE relies on the UNIQUE constraint on locations.name
+            // to skip rows that already exist. This makes the sync fully
+            // idempotent — safe to run on every startup.
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO locations (name, address, created_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![name, "", &now],
+            );
         }
     }
     Ok(())

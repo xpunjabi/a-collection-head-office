@@ -614,3 +614,16 @@ pub async fn backup_database_now(state: State<'_, DbState>) -> Result<String, St
     std::fs::copy(db_src, &dest).map_err(|e| format!("Failed to copy: {}", e))?;
     Ok(dest.to_string_lossy().to_string())
 }
+
+/// Re-run database migrations on demand. This is primarily used by the
+/// Locations page's "Sync from Profile" button to trigger the
+/// `sync_sales_areas_to_locations` migration step without requiring an
+/// app restart. Returns Ok(()) on success.
+#[tauri::command]
+pub async fn init_database(state: State<'_, DbState>) -> Result<(), String> {
+    let mut conn = state.0.lock().unwrap();
+    // Re-run migrations by calling run_migrations directly. This is safe
+    // because all migration steps are idempotent (CREATE TABLE IF NOT EXISTS,
+    // INSERT OR IGNORE, add_col_if_missing).
+    crate::database::run_migrations_public(&mut conn).map_err(|e| e.to_string())
+}
