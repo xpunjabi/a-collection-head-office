@@ -9,6 +9,18 @@
     "core:default",
     "shell:default",
     "dialog:default",
-    "fs:default"
+    "fs:default",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [
+        { "url": "https://wa.me/*" },
+        { "url": "https://www.facebook.com/*" },
+        { "url": "https://facebook.com/*" },
+        { "url": "https://twitter.com/*" },
+        { "url": "https://x.com/*" },
+        { "url": "https://www.instagram.com/*" },
+        { "url": "https://instagram.com/*" }
+      ]
+    }
   ]
 }

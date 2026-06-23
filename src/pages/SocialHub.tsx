@@ -151,10 +151,14 @@ Tags: ${product.tags || ''}`
     }
   }
 
-  const handleShare = (platform: string, text: string) => {
-    // Delegate to the shared util. Lowercase the platform name to match the
-    // SharePlatform union type ('whatsapp' | 'facebook' | 'twitter/x' | 'instagram').
-    shareToPlatform(platform.toLowerCase() as any, text)
+  const handleShare = async (platform: string, text: string) => {
+    // Delegate to the shared util (now async — uses Tauri shell plugin on
+    // desktop, window.open on web). Fire-and-forget; errors are logged inside.
+    try {
+      await shareToPlatform(platform.toLowerCase() as any, text)
+    } catch (err) {
+      console.error('[SocialHub] share failed:', err)
+    }
   }
 
   const handleSaveToKnowledge = async (content: string, topic: string) => {

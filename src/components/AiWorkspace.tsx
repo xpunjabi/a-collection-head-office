@@ -7,6 +7,7 @@ import {
   Send, X, Plus, Image, Link2, FileText, Upload,
   Trash2, GripVertical, Sparkles, Check, Ban, Copy, Sparkle
 } from 'lucide-react'
+import { shareToPlatform } from '../utils/share'
 
 /**
  * Renders a remote web image with graceful fallback to a base64-uploaded image
@@ -519,9 +520,14 @@ export default function AiWorkspace() {
                   </div>
                   <div className="pt-2 border-t border-pink-800/20">
                     <button
-                      onClick={() => {
-                        const text = encodeURIComponent(`${(msg as any).social_post.short_caption}\n\n${(msg as any).social_post.hashtags.join(' ')}`);
-                        window.open(`https://wa.me/?text=${text}`, '_blank');
+                      onClick={async () => {
+                        const fullText = `${(msg as any).social_post.short_caption}\n\n${(msg as any).social_post.hashtags.join(' ')}`;
+                        try {
+                          await shareToPlatform('whatsapp', fullText);
+                        } catch (err) {
+                          console.error('[AiWorkspace] WhatsApp share failed:', err);
+                          alert(`Could not open WhatsApp. Error: ${err}`);
+                        }
                       }}
                       className="flex items-center justify-center space-x-2 w-full px-3 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-medium transition-colors"
                     >

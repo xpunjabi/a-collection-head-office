@@ -92,7 +92,7 @@ export default function Catalog() {
 
   const clearSelection = () => setSelectedIds(new Set())
 
-  const handleShareProduct = (p: Product, platform: SharePlatform) => {
+  const handleShareProduct = async (p: Product, platform: SharePlatform) => {
     // Product type doesn't have retail_price as a typed field, but the DB
     // schema does store it. Read it via optional cast for the discount calc.
     const retailPrice = (p as Product & { retail_price?: number }).retail_price ?? null
@@ -105,11 +105,16 @@ export default function Catalog() {
       hashtags: p.tags ? (() => { try { return JSON.parse(p.tags) } catch { return null } })() : null,
       includeHashtags: true,
     })
-    shareToPlatform(platform, text)
     setOpenShareMenuFor(null)
+    try {
+      await shareToPlatform(platform, text)
+    } catch (err) {
+      console.error('[Catalog] share failed:', err)
+      alert(`Could not open ${platform}. Error: ${err}`)
+    }
   }
 
-  const handleBulkShare = (platform: SharePlatform) => {
+  const handleBulkShare = async (platform: SharePlatform) => {
     const selected = products.filter(p => p.id && selectedIds.has(p.id))
     if (selected.length === 0) return
     // Build a combined message: each product on its own block, separated by ---
@@ -125,8 +130,13 @@ export default function Catalog() {
       return `${idx + 1}. ${text}`
     })
     const combined = blocks.join('\n\n---\n\n')
-    shareToPlatform(platform, combined)
     setBulkShareOpen(false)
+    try {
+      await shareToPlatform(platform, combined)
+    } catch (err) {
+      console.error('[Catalog] bulk share failed:', err)
+      alert(`Could not open ${platform}. Error: ${err}`)
+    }
   }
 
   const handleOpenAdd = async () => {
