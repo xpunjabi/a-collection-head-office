@@ -356,7 +356,7 @@ export default function AiWorkspace() {
                     <img
                       src={`data:image/jpeg;base64,${msg.image_data}`}
                       alt="Uploaded"
-                      className="w-16 h-16 rounded-lg object-cover border border-gray-700/50"
+                      className="w-16 h-16 rounded-lg object-contain border border-gray-700/50"
                     />
                   </div>
                 )}
@@ -378,7 +378,7 @@ export default function AiWorkspace() {
                   <div className="bg-emerald-900/30 border border-emerald-700/30 rounded-lg px-3 py-2 text-xs text-emerald-300">
                     <div className="flex items-start space-x-2">
                       {msg.image_data && (
-                        <img src={`data:image/jpeg;base64,${msg.image_data}`} alt="" className="w-10 h-10 rounded object-cover shrink-0 border border-emerald-700/30" />
+                        <img src={`data:image/jpeg;base64,${msg.image_data}`} alt="" className="w-10 h-10 rounded object-contain shrink-0 border border-emerald-700/30" />
                       )}
                       <div className="flex-1 min-w-0">
                         <span className="font-semibold">Item already exists:</span>{' '}
@@ -412,10 +412,10 @@ export default function AiWorkspace() {
                         <WebImageWithFallback
                           src={msg.fast_path_data.data.best_image_url}
                           fallbackBase64={msg.image_data}
-                          className="w-10 h-10 rounded object-cover shrink-0 border border-violet-700/30"
+                          className="w-10 h-10 rounded object-contain shrink-0 border border-violet-700/30"
                         />
                       ) : msg.image_data ? (
-                        <img src={`data:image/jpeg;base64,${msg.image_data}`} alt="Product thumbnail" className="w-10 h-10 rounded object-cover shrink-0 border border-violet-700/30" />
+                        <img src={`data:image/jpeg;base64,${msg.image_data}`} alt="Product thumbnail" className="w-10 h-10 rounded object-contain shrink-0 border border-violet-700/30" />
                       ) : null}
                       <div className="text-violet-300 font-semibold">Catalog Draft</div>
                     </div>
@@ -484,7 +484,7 @@ export default function AiWorkspace() {
                 <div className="bg-gradient-to-r from-pink-900/30 to-violet-900/30 border border-pink-700/30 rounded-xl px-4 py-3 space-y-3 text-xs">
                   <div className="flex items-start space-x-2">
                     {msg.image_data && (
-                      <img src={`data:image/jpeg;base64,${msg.image_data}`} alt="" className="w-10 h-10 rounded object-cover shrink-0 border border-pink-700/30" />
+                      <img src={`data:image/jpeg;base64,${msg.image_data}`} alt="" className="w-10 h-10 rounded object-contain shrink-0 border border-pink-700/30" />
                     )}
                     <div className="text-pink-300 font-semibold flex items-center space-x-1.5">
                       <Sparkle size={14} />
@@ -585,7 +585,7 @@ export default function AiWorkspace() {
               <img
                 src={`data:image/jpeg;base64,${pendingImage}`}
                 alt="Preview"
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
               />
             </div>
             <span className="text-xs text-gray-400 truncate flex-1">{pendingImageName}</span>

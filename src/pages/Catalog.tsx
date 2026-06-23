@@ -260,7 +260,7 @@ export default function Catalog() {
                           try {
                             const imgs: string[] = JSON.parse(p.images || '[]')
                             return imgs.length > 0 ? (
-                              <ProductImage filename={imgs[0]} alt={p.name} className="object-cover w-full h-full" />
+                              <ProductImage filename={imgs[0]} alt={p.name} className="object-contain w-full h-full" />
                             ) : <ImageIcon size={16} className="text-gray-500" />
                           } catch {
                             return <ImageIcon size={16} className="text-gray-500" />
@@ -400,7 +400,7 @@ export default function Catalog() {
                 <div className="flex flex-wrap gap-2">
                   {images.map((imgName, idx) => (
                     <div key={idx} className="relative w-14 h-14 bg-slate-950 border border-gray-800 rounded-lg overflow-hidden flex items-center justify-center">
-                      <ProductImage filename={imgName} alt={`Product image ${idx + 1}`} className="object-cover w-full h-full" />
+                      <ProductImage filename={imgName} alt={`Product image ${idx + 1}`} className="object-contain w-full h-full" />
                       <button type="button" onClick={() => handleRemoveImage(idx)}
                         className="absolute top-0.5 right-0.5 bg-red-600 text-white rounded-full p-0.5"><X size={8} /></button>
                     </div>

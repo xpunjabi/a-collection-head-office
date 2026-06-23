@@ -111,11 +111,11 @@ export default function ProductDraftCard({ draft: initialDraft, confidence, miss
           <>
             {/* Image preview */}
             {draft.images && draft.images.length > 0 && (
-              <div className="flex -mx-3 -mt-3 mb-2 overflow-hidden rounded-t-xl">
+              <div className="flex -mx-3 -mt-3 mb-2 overflow-hidden rounded-t-xl bg-slate-900 items-center justify-center aspect-square">
                 <ProductImage
                   filename={draft.images[0]}
                   alt={draft.name || 'Product image'}
-                  className="w-full h-32 object-cover"
+                  className="w-full h-full object-contain"
                   iconSize={24}
                 />
               </div>

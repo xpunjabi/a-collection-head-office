@@ -224,11 +224,17 @@ pub fn process_and_save_image(src_path: &Path, app_images_dir: &Path, format_typ
         "thumbnail" => (200, 200),
         _ => (1080, 1080),
     };
-    let resized = if format_type == "thumbnail" {
-        img.resize_to_fill(width, height, FilterType::Lanczos3)
-    } else {
-        img.resize(width, height, FilterType::Lanczos3)
-    };
+    // Use `resize` (preserves aspect ratio, fits within bounds) for ALL
+    // format types — including thumbnails. Previously thumbnails used
+    // `resize_to_fill` which cropped to a 1:1 square on disk, and then the
+    // frontend's `object-cover` cropped AGAIN at display time, causing a
+    // zoomed-in / partially-cropped look (Issue #3 from user feedback).
+    //
+    // With `resize`, thumbnails keep their original aspect ratio and fit
+    // within the bounding box. The frontend uses `object-contain` so the
+    // image is letterboxed (not cropped) when displayed in a non-square
+    // container.
+    let resized = img.resize(width, height, FilterType::Lanczos3);
     resized.save(&dest_path)?;
     Ok(file_name)
 }
@@ -248,11 +254,10 @@ pub fn process_and_save_image_bytes(img_bytes: &[u8], app_images_dir: &Path, for
         "thumbnail" => (200, 200),
         _ => (1080, 1080),
     };
-    let resized = if format_type == "thumbnail" {
-        img.resize_to_fill(width, height, FilterType::Lanczos3)
-    } else {
-        img.resize(width, height, FilterType::Lanczos3)
-    };
+    // Same as above: use `resize` (preserves aspect ratio) instead of
+    // `resize_to_fill` (crops) for thumbnails. See comment in
+    // `process_and_save_image_file` above for full context.
+    let resized = img.resize(width, height, FilterType::Lanczos3);
     resized.save(&dest_path)?;
     Ok(file_name)
 }
