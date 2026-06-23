@@ -6,11 +6,37 @@ use crate::locations::{self, Location};
 use crate::adapters::duckduckgo::{self, WebEvidence};
 use crate::ai::{self, AiResponse, KnowledgeEntry};
 use crate::utils;
-use std::sync::Mutex;
+use tauri::async_runtime::Mutex;
 use std::path::Path;
 use rusqlite::Connection;
 use tauri::State;
 
+/// Database state shared across all Tauri commands.
+///
+/// Uses `tauri::async_runtime::Mutex` (which is `tokio::sync::Mutex` under the
+/// hood) instead of `std::sync::Mutex`. This is critical because:
+///
+/// 1. **No deadlock across `.await`** — `std::sync::Mutex` is not `Send` when
+///    held across `.await` points, which would fail to compile under Tauri's
+///    async command model. `tokio::sync::Mutex` is `Send` and safe to hold
+///    across awaits.
+///
+/// 2. **No runtime blocking** — When a command needs to await (e.g., a 45s
+///    Gemini API call), other commands can still acquire the lock if needed
+///    (though in practice they shouldn't — see pattern below).
+///
+/// 3. **Pattern discipline** — Even with an async mutex, the codebase follows
+///    the scoped-block pattern: acquire lock only for the duration of the
+///    synchronous DB operation, then release before any `.await`. This means
+///    long AI calls do NOT hold the DB lock, preventing UI freezes.
+///
+/// Usage:
+/// ```ignore
+/// let conn = state.0.lock().await;
+/// // do synchronous rusqlite work here
+/// // drop(conn) — implicit when block ends
+/// // .await calls happen AFTER the lock is released
+/// ```
 pub struct DbState(pub Mutex<Connection>);
 
 fn set_setting_val(conn: &Connection, key: &str, value: &str) -> Result<(), rusqlite::Error> {
@@ -26,61 +52,61 @@ fn get_setting_val(conn: &Connection, key: &str) -> Result<String, rusqlite::Err
 
 #[tauri::command]
 pub async fn get_products(state: State<'_, DbState>) -> Result<Vec<Product>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     catalog::get_all_products(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_product(state: State<'_, DbState>, id: i64) -> Result<Product, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     catalog::get_product_by_id(&conn, id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn add_product(state: State<'_, DbState>, product: Product) -> Result<i64, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     catalog::add_product(&conn, &product).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn update_product(state: State<'_, DbState>, product: Product) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     catalog::update_product(&conn, &product).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn delete_product(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     catalog::delete_product(&conn, id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_product_locations(state: State<'_, DbState>, product_id: i64) -> Result<Vec<ProductLocationStock>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     catalog::get_product_locations(&conn, product_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn upsert_product_location(state: State<'_, DbState>, product_id: i64, location_id: i64, quantity: i64) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     catalog::upsert_product_location(&conn, product_id, location_id, quantity).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn search_products_by_color(state: State<'_, DbState>, color: String) -> Result<Vec<Product>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     catalog::search_by_color(&conn, &color).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn export_products_csv(state: State<'_, DbState>) -> Result<String, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     catalog::export_to_csv(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn import_products_csv(state: State<'_, DbState>, csv_content: String) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     catalog::import_from_csv(&conn, &csv_content).map_err(|e| e.to_string())
 }
 
@@ -132,19 +158,19 @@ pub async fn save_base64_image(base64_data: String, format_type: String) -> Resu
 
 #[tauri::command]
 pub async fn get_locations(state: State<'_, DbState>) -> Result<Vec<Location>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     locations::get_all_locations(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn add_location(state: State<'_, DbState>, name: String, address: String) -> Result<i64, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     locations::add_location(&conn, &name, &address).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn update_location(state: State<'_, DbState>, id: i64, name: String, address: String, is_active: bool) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     locations::update_location(&conn, id, &name, &address, is_active).map_err(|e| e.to_string())
 }
 
@@ -152,31 +178,31 @@ pub async fn update_location(state: State<'_, DbState>, id: i64, name: String, a
 
 #[tauri::command]
 pub async fn get_inventory_summary(state: State<'_, DbState>) -> Result<InventorySummary, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     inventory::get_inventory_summary(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_low_stock(state: State<'_, DbState>, threshold: i64) -> Result<Vec<LowStockItem>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     inventory::get_low_stock_items(&conn, threshold).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_dead_stock(state: State<'_, DbState>, days_limit: i64) -> Result<Vec<DeadStockItem>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     inventory::get_dead_stock_items(&conn, days_limit).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_best_sellers(state: State<'_, DbState>, limit: i64) -> Result<Vec<BestSellerItem>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     inventory::get_best_sellers(&conn, limit).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn adjust_stock(state: State<'_, DbState>, product_id: i64, adjustment: i64) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     inventory::adjust_stock(&conn, product_id, adjustment).map_err(|e| e.to_string())
 }
 
@@ -184,37 +210,37 @@ pub async fn adjust_stock(state: State<'_, DbState>, product_id: i64, adjustment
 
 #[tauri::command]
 pub async fn get_customers(state: State<'_, DbState>) -> Result<Vec<Customer>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     customers::get_all_customers(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn add_customer(state: State<'_, DbState>, customer: Customer) -> Result<i64, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     customers::add_customer(&conn, &customer).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn update_customer(state: State<'_, DbState>, customer: Customer) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     customers::update_customer(&conn, &customer).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn delete_customer(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     customers::delete_customer(&conn, id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn create_order(state: State<'_, DbState>, customer_id: i64, items: Vec<OrderItemInput>) -> Result<i64, String> {
-    let mut conn = state.0.lock().unwrap();
+    let mut conn = state.0.lock().await;
     customers::create_order(&mut conn, customer_id, items).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_customer_history(state: State<'_, DbState>, customer_id: i64) -> Result<Vec<OrderHistory>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     customers::get_customer_purchase_history(&conn, customer_id).map_err(|e| e.to_string())
 }
 
@@ -222,19 +248,19 @@ pub async fn get_customer_history(state: State<'_, DbState>, customer_id: i64) -
 
 #[tauri::command]
 pub async fn get_sales_report(state: State<'_, DbState>, start_date: String, end_date: String) -> Result<SalesReport, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     reports::generate_sales_report(&conn, &start_date, &end_date).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_inventory_report(state: State<'_, DbState>) -> Result<InventoryReport, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     reports::generate_inventory_report(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_customer_report(state: State<'_, DbState>) -> Result<CustomerSummaryReport, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     reports::generate_customer_report(&conn).map_err(|e| e.to_string())
 }
 
@@ -268,7 +294,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
 
     if let Some(ref extraction) = extraction {
         let match_result = {
-            let conn = state.0.lock().unwrap();
+            let conn = state.0.lock().await;
             crate::ai::local_match::check_local_catalog(&conn, &extraction.qr_data, &extraction.ocr_text)
         };
         match match_result {
@@ -279,7 +305,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
             Ok(None) => {
                 println!("[Local Match] No match found. Proceeding to web evidence + AI draft.");
                 let (api_key, model) = {
-                    let conn = state.0.lock().unwrap();
+                    let conn = state.0.lock().await;
                     let cfg = ai::get_ai_config(&conn)?;
                     (cfg.1.clone(), cfg.2.clone())
                 };
@@ -326,7 +352,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
     }
 
     let local_result = {
-        let conn = state.0.lock().unwrap();
+        let conn = state.0.lock().await;
         ai::try_local_intent(&conn, &prompt)
     };
     if let Some(response) = local_result { return Ok(response); }
@@ -356,7 +382,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
     }
 
     let (provider, api_key, model) = {
-        let conn = state.0.lock().unwrap();
+        let conn = state.0.lock().await;
         ai::get_ai_config(&conn)?
     };
     if api_key.is_empty() && provider != "local" {
@@ -390,7 +416,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
     };
 
     let system_prompt = {
-        let conn = state.0.lock().unwrap();
+        let conn = state.0.lock().await;
         let mut sp = ai::build_system_prompt_with_web(&conn, &prompt, fallback_web_evidence.as_ref())?;
         sp.push_str("\n\n## Product Intake Mode\n\nWhen the user shares a product image, link, code, or description, you MUST:\n1. Analyze all available information\n2. If product information is detected, return a JSON block at the end of your response:\n\n```json\n{\n  \"draft\": {\n    \"name\": \"...\",\n    \"sku\": \"...\",\n    \"category\": \"...\",\n    \"brand\": \"...\",\n    \"fabric\": \"...\",\n    \"color\": \"...\",\n    \"design\": \"...\",\n    \"season\": \"...\",\n    \"cost_price\": 0.0,\n    \"sale_price\": 0.0,\n    \"retail_price\": 0.0,\n    \"description\": \"...\",\n    \"tags\": [\"...\"],\n    \"keywords\": [\"...\"],\n    \"hashtags\": [\"...\"]\n  },\n  \"confidence\": 0.85,\n  \"missing_fields\": [\"stock_location\", \"purchase_cost\"],\n  \"suggested_actions\": [\"Add To Catalog\", \"Edit Draft\", \"Generate Marketing\"]\n}\n```\n\n3. If no product information is detected, respond normally as a business assistant.\n");
         sp
@@ -398,7 +424,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
 
     let response_text = ai::call_ai_provider(&provider, &api_key, &model, &system_prompt, &prompt, image_data.as_deref()).await?;
     {
-        let conn = state.0.lock().unwrap();
+        let conn = state.0.lock().await;
         ai::log_request(&conn, &prompt, &response_text, &provider)?;
     }
 
@@ -440,14 +466,14 @@ pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai:
         created_at: now.clone(),
         updated_at: now,
     };
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     let id = crate::catalog::add_product(&conn, &product).map_err(|e| e.to_string())?;
     Ok(id)
 }
 
 #[tauri::command]
 pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::catalog_composer::CatalogDraft) -> Result<i64, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
     let sku = draft.design_code.clone().unwrap_or_default();
     let title = &draft.title;
@@ -514,12 +540,12 @@ pub async fn generate_social_post(
     platform: Option<String>,
 ) -> Result<crate::ai::marketing_engine::MarketingPost, String> {
     let (api_key, model) = {
-        let conn = state.0.lock().unwrap();
+        let conn = state.0.lock().await;
         let cfg = ai::get_ai_config(&conn)?;
         (cfg.1.clone(), cfg.2.clone())
     };
     let product = {
-        let conn = state.0.lock().unwrap();
+        let conn = state.0.lock().await;
         crate::catalog::get_product_by_id(&conn, product_id).map_err(|e| e.to_string())?
     };
     let product_name = &product.name;
@@ -541,14 +567,14 @@ pub async fn generate_social_post(
 #[tauri::command]
 pub async fn generate_marketing(state: State<'_, DbState>, product_id: i64) -> Result<Vec<ai::MarketingContent>, String> {
     let (product, provider, api_key, model, has_fb, has_wa) = {
-        let conn = state.0.lock().unwrap();
+        let conn = state.0.lock().await;
         ai::prepare_marketing_data(&conn, product_id)?
     };
     let prompt = ai::build_marketing_prompt(&product, has_fb, has_wa);
     let posts = ai::generate_marketing_content(&provider, &api_key, &model, &prompt).await?;
     let now = chrono::Utc::now().to_rfc3339();
     {
-        let conn = state.0.lock().unwrap();
+        let conn = state.0.lock().await;
         for post in &posts {
             // Serialize hashtags array to JSON string for storage.
             let hashtags_json = serde_json::to_string(&post.hashtags).unwrap_or_else(|_| "[]".to_string());
@@ -563,19 +589,19 @@ pub async fn generate_marketing(state: State<'_, DbState>, product_id: i64) -> R
 
 #[tauri::command]
 pub async fn get_knowledge(state: State<'_, DbState>) -> Result<Vec<KnowledgeEntry>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     ai::get_all_knowledge(&conn)
 }
 
 #[tauri::command]
 pub async fn save_knowledge(state: State<'_, DbState>, topic: String, content: String, source: String) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     ai::save_knowledge(&conn, &topic, &content, &source)
 }
 
 #[tauri::command]
 pub async fn delete_knowledge(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     ai::delete_knowledge(&conn, id)
 }
 
@@ -583,7 +609,7 @@ pub async fn delete_knowledge(state: State<'_, DbState>, id: i64) -> Result<(), 
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, DbState>) -> Result<std::collections::HashMap<String, String>, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     let mut stmt = conn.prepare("SELECT key, value FROM settings").map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |row| {
         let k: String = row.get(0)?;
@@ -597,13 +623,13 @@ pub async fn get_settings(state: State<'_, DbState>) -> Result<std::collections:
 
 #[tauri::command]
 pub async fn update_setting(state: State<'_, DbState>, key: String, value: String) -> Result<(), String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     set_setting_val(&conn, &key, &value).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn backup_database_now(state: State<'_, DbState>) -> Result<String, String> {
-    let conn = state.0.lock().unwrap();
+    let conn = state.0.lock().await;
     let backup_path = get_setting_val(&conn, "backup_path").map_err(|e| e.to_string())?;
     if backup_path.is_empty() { return Err("Backup path is not configured.".to_string()); }
     let backup_dir = Path::new(&backup_path);
@@ -621,7 +647,7 @@ pub async fn backup_database_now(state: State<'_, DbState>) -> Result<String, St
 /// app restart. Returns Ok(()) on success.
 #[tauri::command]
 pub async fn init_database(state: State<'_, DbState>) -> Result<(), String> {
-    let mut conn = state.0.lock().unwrap();
+    let mut conn = state.0.lock().await;
     // Re-run migrations by calling run_migrations directly. This is safe
     // because all migration steps are idempotent (CREATE TABLE IF NOT EXISTS,
     // INSERT OR IGNORE, add_col_if_missing).

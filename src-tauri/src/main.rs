@@ -22,7 +22,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .manage(DbState(std::sync::Mutex::new(conn)))
+        .manage(DbState(tauri::async_runtime::Mutex::new(conn)))
         .setup(move |app| {
             let app_handle = app.handle().clone();
             automation::start_scheduler(db_path, app_handle);
