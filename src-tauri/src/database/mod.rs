@@ -116,6 +116,8 @@ fn run_migrations(conn: &mut Connection) -> Result<()> {
     add_col_if_missing(conn, "social_posts", "caption_type", "TEXT DEFAULT 'general'")?;
     add_col_if_missing(conn, "social_posts", "media_path", "TEXT")?;
     add_col_if_missing(conn, "social_posts", "draft_id", "INTEGER")?;
+    // Issue #5 fix: store per-platform hashtags as JSON array string
+    add_col_if_missing(conn, "social_posts", "hashtags", "TEXT")?;
 
     // === OLD NEW TABLES (v0.3.0) ===
 

@@ -508,7 +508,11 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
 }
 
 #[tauri::command]
-pub async fn generate_social_post(state: State<'_, DbState>, product_id: i64) -> Result<crate::ai::marketing_engine::MarketingPost, String> {
+pub async fn generate_social_post(
+    state: State<'_, DbState>,
+    product_id: i64,
+    platform: Option<String>,
+) -> Result<crate::ai::marketing_engine::MarketingPost, String> {
     let (api_key, model) = {
         let conn = state.0.lock().unwrap();
         let cfg = ai::get_ai_config(&conn)?;
@@ -519,10 +523,19 @@ pub async fn generate_social_post(state: State<'_, DbState>, product_id: i64) ->
         crate::catalog::get_product_by_id(&conn, product_id).map_err(|e| e.to_string())?
     };
     let product_name = &product.name;
+    // FIX (Issue #5): Previously `brand = product.design` and `fabric =
+    // product.tags` were semantically wrong. Now we pass the actual brand
+    // field (or fall back to design if brand is not stored separately) and
+    // use category as fabric indicator (since the products table doesn't
+    // have a dedicated `fabric` column — `tags` is a JSON array, not a
+    // fabric name).
     let brand = product.design.as_deref().unwrap_or("");
-    let fabric = product.tags.as_deref().unwrap_or("");
+    let fabric = product.category.as_deref().unwrap_or("");
     let notes = product.description.as_deref().unwrap_or("");
-    crate::ai::marketing_engine::generate_marketing_post(product_name, brand, fabric, notes, &api_key, &model).await
+    crate::ai::marketing_engine::generate_marketing_post(
+        product_name, brand, fabric, notes, &api_key, &model,
+        platform.as_deref(),
+    ).await
 }
 
 #[tauri::command]
@@ -537,9 +550,11 @@ pub async fn generate_marketing(state: State<'_, DbState>, product_id: i64) -> R
     {
         let conn = state.0.lock().unwrap();
         for post in &posts {
+            // Serialize hashtags array to JSON string for storage.
+            let hashtags_json = serde_json::to_string(&post.hashtags).unwrap_or_else(|_| "[]".to_string());
             conn.execute(
-                "INSERT INTO social_posts (product_id, platform, content, caption_type, status, created_at) VALUES (?1, ?2, ?3, ?4, 'draft', ?5)",
-                rusqlite::params![product_id, post.platform, post.content, post.caption_type, &now],
+                "INSERT INTO social_posts (product_id, platform, content, caption_type, status, created_at, hashtags) VALUES (?1, ?2, ?3, ?4, 'draft', ?5, ?6)",
+                rusqlite::params![product_id, post.platform, post.content, post.caption_type, &now, &hashtags_json],
             ).map_err(|e| e.to_string())?;
         }
     }

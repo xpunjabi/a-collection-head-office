@@ -53,6 +53,12 @@ pub struct MarketingContent {
     pub platform: String,
     pub content: String,
     pub caption_type: String,
+    /// Per-platform hashtags (Issue #5 fix). The AI prompt now requests a
+    /// `hashtags` array per platform object. This field is Option so the
+    /// struct remains backwards-compatible with older AI responses that
+    /// omitted it.
+    #[serde(default)]
+    pub hashtags: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -368,29 +374,53 @@ pub fn prepare_marketing_data(conn: &Connection, product_id: i64) -> Result<(cra
 
 pub fn build_marketing_prompt(product: &crate::catalog::Product, has_fb: bool, has_wa: bool) -> String {
     let product_json = serde_json::to_string(product).unwrap_or_default();
+    // FIX (Issue #5): Previously the JSON template hardcoded all 5 platforms
+    // (facebook, instagram, tiktok, whatsapp_status, whatsapp_channel)
+    // regardless of has_fb/has_wa flags, and had NO per-platform hashtags
+    // field. Now we build the platform list dynamically and add a per-platform
+    // `hashtags` array with platform-specific conventions.
+    let mut platforms_block = String::new();
+    if has_fb {
+        platforms_block.push_str("- facebook (1-2 hashtags, use #ACollection + 1 topical)\n");
+    }
+    platforms_block.push_str("- instagram (5-10 hashtags, mix trending #instafashion #ootd #reelvsfeed + niche)\n");
+    platforms_block.push_str("- tiktok (3-5 hashtags, MUST include #fyp and #foryou)\n");
+    if has_wa {
+        platforms_block.push_str("- whatsapp_status (0 hashtags, plain broadcast message)\n");
+        platforms_block.push_str("- whatsapp_channel (0 hashtags, plain announcement)\n");
+    }
+    if has_fb {
+        platforms_block.push_str("- twitter (1-2 hashtags max due to char limit)\n");
+    }
+
     format!(
-        "Generate social media marketing content for the following product in our clothing business 'A Collection' (Faisalabad, Narowal, Shakargarh, Zafarwal). 
+        "Generate social media marketing content for the following product in our clothing business 'A Collection' (Faisalabad, Narowal, Shakargarh, Zafarwal).
 Currency: PKR. Write in attractive Roman Urdu or English.
 
 Product Data:
 {}
 
-Generate content for the following platforms:
-{}{}
+Generate content for the following platforms (each with platform-specific caption style and hashtag conventions):
+{}
 
-Return as JSON array:
+Return as JSON array. Each object MUST have a `hashtags` array with the platform-appropriate count:
 [
-  {{\"platform\": \"facebook\", \"content\": \"...\", \"caption_type\": \"product_showcase\"}},
-  {{\"platform\": \"instagram\", \"content\": \"...\", \"caption_type\": \"product_showcase\"}},
-  {{\"platform\": \"tiktok\", \"content\": \"...\", \"caption_type\": \"product_showcase\"}},
-  {{\"platform\": \"whatsapp_status\", \"content\": \"...\", \"caption_type\": \"product_announcement\"}},
-  {{\"platform\": \"whatsapp_channel\", \"content\": \"...\", \"caption_type\": \"product_announcement\"}}
+  {{\"platform\": \"facebook\", \"content\": \"...\", \"caption_type\": \"product_showcase\", \"hashtags\": [\"#ACollection\", \"#PakistaniFashion\"]}},
+  {{\"platform\": \"instagram\", \"content\": \"...\", \"caption_type\": \"product_showcase\", \"hashtags\": [\"#instafashion\", \"#ootd\", \"#reelvsfeed\", \"#pakistaniweddingwear\", \"#lawncollection\", \"...\"]}},
+  {{\"platform\": \"tiktok\", \"content\": \"...\", \"caption_type\": \"product_showcase\", \"hashtags\": [\"#fyp\", \"#foryou\", \"#pakistanifashion\", \"#lawn\", \"#tiktokfashion\"]}},
+  {{\"platform\": \"whatsapp_status\", \"content\": \"...\", \"caption_type\": \"product_announcement\", \"hashtags\": []}},
+  {{\"platform\": \"whatsapp_channel\", \"content\": \"...\", \"caption_type\": \"product_announcement\", \"hashtags\": []}}
 ]
 
-ONLY return the JSON array. No other text.",
+IMPORTANT RULES:
+- Each hashtag MUST start with #.
+- WhatsApp platforms MUST have an empty hashtags array (WhatsApp doesn't use hashtags).
+- TikTok MUST include #fyp and #foryou.
+- Instagram should have 5-10 hashtags mixing trending + niche.
+- Facebook should have 1-2 hashtags max.
+- ONLY return the JSON array. No other text.",
         product_json,
-        if has_fb { "facebook\n" } else { "" },
-        if has_wa { "whatsapp (status + channel)\n" } else { "" }
+        platforms_block
     )
 }
 
