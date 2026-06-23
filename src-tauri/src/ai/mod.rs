@@ -333,8 +333,9 @@ fn get_relevant_knowledge(conn: &Connection, prompt: &str) -> Result<Vec<Knowled
 pub async fn call_ai_provider(provider: &str, api_key: &str, model: &str, system_prompt: &str, user_prompt: &str, image_data: Option<&str>) -> Result<String, String> {
     match provider {
         "gemini" => call_gemini(api_key, model, system_prompt, user_prompt, image_data).await,
-        "openai" => call_openai(api_key, model, system_prompt, user_prompt).await,
-        "claude" => call_claude(api_key, model, system_prompt, user_prompt).await,
+        "openai" => call_openai(api_key, model, system_prompt, user_prompt, image_data).await,
+        "claude" => call_claude(api_key, model, system_prompt, user_prompt, image_data).await,
+        // Local LLM (Ollama) uses a different API shape for multimodal — out of scope for this fix.
         "local" => call_local_llm(model, system_prompt, user_prompt).await,
         _ => Err(format!("Unsupported AI provider: {}", provider)),
     }
@@ -446,10 +447,16 @@ pub async fn generate_marketing_content(provider: &str, api_key: &str, model: &s
 fn get_ai_settings(conn: &Connection) -> Result<(String, String, String), String> {
     let mut stmt = conn.prepare("SELECT key, value FROM settings WHERE key IN ('ai_provider', 'ai_api_key', 'ai_model')")
         .map_err(|e| e.to_string())?;
-    
+
     let mut provider = "gemini".to_string();
     let mut api_key = "".to_string();
-    let mut model = "gemini-1.5-flash".to_string();
+    // Default to gemini-2.0-flash (Finding H fix). The previous default
+    // gemini-1.5-flash is deprecated by Google as of 2025; users on fresh
+    // installs would hit model-not-found errors. gemini-2.0-flash is the
+    // current recommended fast tier with vision support.
+    // Existing installs that already have ai_model set in settings are NOT
+    // affected — their stored value overrides this default.
+    let mut model = "gemini-2.0-flash".to_string();
 
     let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
@@ -461,6 +468,13 @@ fn get_ai_settings(conn: &Connection) -> Result<(String, String, String), String
             "ai_model" => model = val,
             _ => {}
         }
+    }
+    // Auto-upgrade: if user has the deprecated gemini-1.5-flash stored,
+    // silently upgrade to gemini-2.0-flash. This prevents users from being
+    // stuck on a deprecated model after upgrading the app. The user can still
+    // change it back in Settings if they want.
+    if model == "gemini-1.5-flash" {
+        model = "gemini-2.0-flash".to_string();
     }
     Ok((provider, api_key, model))
 }
@@ -636,7 +650,7 @@ async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_promp
     Ok(text.to_string())
 }
 
-async fn call_openai(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
+async fn call_openai(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str, image_data: Option<&str>) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -644,11 +658,32 @@ async fn call_openai(api_key: &str, model: &str, system_prompt: &str, user_promp
 
     let url = "https://api.openai.com/v1/chat/completions";
 
+    // Build user message content. If an image is attached, use the vision
+    // content format: an array of {type: text} and {type: image_url} objects.
+    // Otherwise, send a plain string (cheaper, smaller payload).
+    let user_content: serde_json::Value = if let Some(b64) = image_data {
+        // Strip data URI prefix if present (e.g. "data:image/jpeg;base64,...")
+        let clean_b64 = if let Some(comma_pos) = b64.find(',') {
+            &b64[comma_pos + 1..]
+        } else {
+            b64
+        };
+        let mime = detect_mime_type(clean_b64);
+        // OpenAI vision format: data URI inline. Must include the mime prefix.
+        let data_uri = format!("data:{};base64,{}", mime, clean_b64);
+        json!([
+            {"type": "text", "text": user_prompt},
+            {"type": "image_url", "image_url": {"url": data_uri}}
+        ])
+    } else {
+        json!(user_prompt)
+    };
+
     let payload = json!({
         "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_content}
         ]
     });
 
@@ -668,14 +703,27 @@ async fn call_openai(api_key: &str, model: &str, system_prompt: &str, user_promp
         .await
         .map_err(|e| format!("Failed parsing OpenAI response: {}", e))?;
 
-    let text = res_json["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or_else(|| "Failed to extract text from OpenAI response".to_string())?;
+    // OpenAI vision models may return content as a string OR as an array of
+    // content blocks. Handle both formats defensively.
+    let content_val = &res_json["choices"][0]["message"]["content"];
+    let text = if let Some(s) = content_val.as_str() {
+        s.to_string()
+    } else if let Some(arr) = content_val.as_array() {
+        let mut combined = String::new();
+        for block in arr {
+            if let Some(t) = block["text"].as_str() {
+                combined.push_str(t);
+            }
+        }
+        combined
+    } else {
+        return Err("Failed to extract text from OpenAI response".to_string());
+    };
 
-    Ok(text.to_string())
+    Ok(text)
 }
 
-async fn call_claude(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
+async fn call_claude(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str, image_data: Option<&str>) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -683,11 +731,40 @@ async fn call_claude(api_key: &str, model: &str, system_prompt: &str, user_promp
 
     let url = "https://api.anthropic.com/v1/messages";
 
+    // Build user message content. Claude's messages API uses an array of
+    // content blocks. For text-only, a single {type: text} block suffices.
+    // For image+text, prepend an {type: image, source: {type: base64, ...}}
+    // block followed by the text block.
+    let mut content_blocks: Vec<serde_json::Value> = Vec::new();
+    if let Some(b64) = image_data {
+        // Strip data URI prefix if present (e.g. "data:image/jpeg;base64,...")
+        let clean_b64 = if let Some(comma_pos) = b64.find(',') {
+            &b64[comma_pos + 1..]
+        } else {
+            b64
+        };
+        let mime = detect_mime_type(clean_b64);
+        // Claude expects the media_type as one of: image/jpeg, image/png,
+        // image/gif, image/webp. Our detect_mime_type returns one of these.
+        content_blocks.push(json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime,
+                "data": clean_b64
+            }
+        }));
+    }
+    content_blocks.push(json!({
+        "type": "text",
+        "text": user_prompt
+    }));
+
     let payload = json!({
         "model": model,
         "max_tokens": 1024,
         "system": system_prompt,
-        "messages": [{"role": "user", "content": user_prompt}]
+        "messages": [{"role": "user", "content": content_blocks}]
     });
 
     let res = client.post(url)
@@ -707,11 +784,21 @@ async fn call_claude(api_key: &str, model: &str, system_prompt: &str, user_promp
         .await
         .map_err(|e| format!("Failed parsing Claude response: {}", e))?;
 
-    let text = res_json["content"][0]["text"]
-        .as_str()
+    // Claude's response.content is always an array of content blocks.
+    // Concatenate all {type: text} blocks.
+    let content_arr = res_json["content"].as_array()
         .ok_or_else(|| "Failed to extract text from Claude response".to_string())?;
+    let mut combined = String::new();
+    for block in content_arr {
+        if let Some(t) = block["text"].as_str() {
+            combined.push_str(t);
+        }
+    }
+    if combined.is_empty() {
+        return Err("Claude response contained no text content".to_string());
+    }
 
-    Ok(text.to_string())
+    Ok(combined)
 }
 
 async fn call_local_llm(model: &str, system_prompt: &str, user_prompt: &str) -> Result<String, String> {

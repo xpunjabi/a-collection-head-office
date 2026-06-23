@@ -305,7 +305,7 @@ fn seed_initial_data(conn: &mut Connection) -> Result<()> {
     if settings_count == 0 {
         let default_settings = [
             ("theme", "dark"), ("ai_provider", "gemini"), ("ai_api_key", ""),
-            ("ai_model", "gemini-1.5-flash"), ("backup_path", ""), ("backup_interval_days", "7"),
+            ("ai_model", "gemini-2.0-flash"), ("backup_path", ""), ("backup_interval_days", "7"),
             ("business_profile", DEFAULT_PROFILE),
         ];
         for (k, v) in default_settings.iter() {
