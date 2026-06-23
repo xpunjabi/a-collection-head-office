@@ -331,6 +331,30 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
     };
     if let Some(response) = local_result { return Ok(response); }
 
+    // SHORT-CIRCUIT: if the fast path already produced a CatalogDraft (or a
+    // LocalMatchFound), DO NOT run the second AI call. The previous behavior
+    // was to ALWAYS run a fallback `call_ai_provider` that re-prompted Gemini
+    // in "Product Intake Mode" and parsed another draft from its text response,
+    // which caused the duplicate-draft UX bug (frontend rendered BOTH
+    // fast_path_data AND product_draft for the same image).
+    //
+    // We only fall through to the second AI call when the fast path did not
+    // produce a structured result — i.e. no image was uploaded, or local
+    // extraction failed, or local_match + catalog_composer both yielded None.
+    if fast_path_data.is_some() {
+        println!("[ask_ai] Fast path produced a result; skipping fallback AI call to avoid duplicate draft.");
+        return Ok(AiResponse {
+            text: String::new(),
+            detected_action: None,
+            action_data: None,
+            product_draft: None,
+            confidence: None,
+            missing_fields: None,
+            suggested_actions: None,
+            fast_path_data,
+        });
+    }
+
     let (provider, api_key, model) = {
         let conn = state.0.lock().unwrap();
         ai::get_ai_config(&conn)?

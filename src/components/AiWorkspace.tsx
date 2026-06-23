@@ -362,7 +362,7 @@ export default function AiWorkspace() {
                 )}
               </span>
             </div>
-            {msg.role === 'assistant' && msg.product_draft && msg.confidence !== undefined && (
+            {msg.role === 'assistant' && msg.product_draft && msg.confidence !== undefined && !msg.fast_path_data && (
               <div className="mt-2">
                 <ProductDraftCard
                   draft={msg.product_draft}

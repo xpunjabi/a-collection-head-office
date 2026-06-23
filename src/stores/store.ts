@@ -363,9 +363,27 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // AI Product Drafts
   aiProductDrafts: [],
-  addAiProductDraft: (draft, confidence, missingFields, suggestedActions) => set((state) => ({
-    aiProductDrafts: [...state.aiProductDrafts, { draft, confidence, missingFields, suggestedActions }],
-  })),
+  addAiProductDraft: (draft, confidence, missingFields, suggestedActions) => set((state) => {
+    // Deduplicate by SKU (preferred) or name (fallback). If a draft with the
+    // same SKU already exists in the in-memory list, replace it instead of
+    // pushing a duplicate. This is a defensive layer — the backend
+    // `ask_ai` command in v0.9.5+ should already short-circuit duplicate
+    // drafts, but this guard prevents any future regression from surfacing
+    // as a duplicate UI card.
+    const sku = (draft.sku || '').trim().toLowerCase();
+    const name = (draft.name || '').trim().toLowerCase();
+    const key = sku || name;
+    let list = [...state.aiProductDrafts];
+    if (key) {
+      list = list.filter((d) => {
+        const dSku = (d.draft.sku || '').trim().toLowerCase();
+        const dName = (d.draft.name || '').trim().toLowerCase();
+        return (dSku || dName) !== key;
+      });
+    }
+    list.push({ draft, confidence, missingFields, suggestedActions });
+    return { aiProductDrafts: list };
+  }),
   removeAiProductDraft: (index) => set((state) => ({
     aiProductDrafts: state.aiProductDrafts.filter((_, i) => i !== index),
   })),
