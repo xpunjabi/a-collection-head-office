@@ -1,13 +1,39 @@
 name: Firebase Deploy
 
+# Trigger only when frontend-affecting files change on master.
+# This avoids wasting Actions minutes on Rust-only changes (which don't
+# affect the web preview) and keeps the deploy fast.
 on:
   push:
     branches:
       - master
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - 'tailwind.config.js'
+      - 'postcss.config.js'
+      - 'firebase.json'
+      - '.firebaserc'
+      - '.github/workflows/firebase-deploy.yml'
+
+# Cancel any in-progress deploy for the same ref — newer commit wins.
+concurrency:
+  group: firebase-deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Don't deploy if the build step fails — protects the live site
+    # from being overwritten with a broken build.
+    permissions:
+      contents: read
+      pull-requests: write
 
     steps:
       - name: Checkout code
@@ -16,7 +42,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -24,6 +50,19 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      - name: Verify build output
+        run: |
+          if [ ! -d dist ]; then
+            echo "::error::Build did not produce a dist/ directory. Aborting deploy."
+            exit 1
+          fi
+          if [ ! -f dist/index.html ]; then
+            echo "::error::dist/index.html is missing. Aborting deploy."
+            exit 1
+          fi
+          echo "Build output verified."
+          ls -la dist/
 
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
