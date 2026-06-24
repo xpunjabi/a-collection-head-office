@@ -387,16 +387,17 @@ export default function Catalog() {
                 <th className="py-3 px-3">Code</th>
                 <th className="py-3 px-3">Category</th>
                 <th className="py-3 px-3">Color</th>
-                <th className="py-3 px-3">Season</th>
-                <th className="py-3 px-3 text-right">Purchase</th>
+                <th className="py-3 px-3 text-right">Landed</th>
                 <th className="py-3 px-3 text-right">Sale</th>
-                <th className="py-3 px-3 text-center">Stock</th>
+                <th className="py-3 px-3 text-center">HO</th>
+                <th className="py-3 px-3 text-center">Agents</th>
+                <th className="py-3 px-3 text-center">Sold</th>
                 <th className="py-3 px-3 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800 text-sm text-gray-300">
               {filteredProducts.length === 0 ? (
-                  <tr><td colSpan={10} className="py-10 text-center text-gray-500">No products found.</td></tr>
+                  <tr><td colSpan={11} className="py-10 text-center text-gray-500">No products found.</td></tr>
               ) : filteredProducts.map(p => {
                 const isSelected = p.id != null && selectedIds.has(p.id)
                 return (
@@ -440,10 +441,15 @@ export default function Catalog() {
                   <td className="py-3 px-3">
                     {p.color ? <span className="inline-flex items-center space-x-1 text-xs"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{backgroundColor: p.color.toLowerCase()}} /> <span>{p.color}</span></span> : '-'}
                   </td>
-                  <td className="py-3 px-3 text-xs">{p.season || '-'}</td>
-                  <td className="py-3 px-3 text-right font-mono text-xs">Rs.{p.purchase_price?.toFixed(0) || p.cost_price.toFixed(0)}</td>
+                  <td className="py-3 px-3 text-right font-mono text-xs text-amber-400">
+                    {p.landed_unit_cost ? `Rs.${p.landed_unit_cost.toFixed(0)}` : '-'}
+                  </td>
                   <td className="py-3 px-3 text-right font-mono text-xs text-violet-400">Rs.{p.sale_price.toFixed(0)}</td>
-                  <td className={`py-3 px-3 text-center font-bold text-xs ${p.stock_quantity <= 5 ? 'text-red-400' : 'text-gray-300'}`}>{p.stock_quantity}</td>
+                  <td className={`py-3 px-3 text-center font-bold text-xs ${(p.qty_in_head_office ?? p.stock_quantity) <= 5 ? 'text-red-400' : 'text-gray-300'}`}>
+                    {p.qty_in_head_office ?? p.stock_quantity}
+                  </td>
+                  <td className="py-3 px-3 text-center font-bold text-xs text-blue-400">{p.qty_with_agents ?? 0}</td>
+                  <td className="py-3 px-3 text-center font-bold text-xs text-emerald-400">{p.qty_sold ?? 0}</td>
                   <td className="py-3 px-3 text-center" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-center space-x-2">
                       <button onClick={(e) => { e.stopPropagation(); p.id && handleOpenEdit(p); }} className="p-1 hover:text-violet-400" title="Edit"><Edit size={14} /></button>

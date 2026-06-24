@@ -26,6 +26,35 @@ pub struct Product {
     pub supplier_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
+    // v0.11.0+ profit-mode fields (optional — old rows may not have them)
+    #[serde(default)]
+    pub product_code: Option<String>,
+    #[serde(default)]
+    pub brand: Option<String>,
+    #[serde(default)]
+    pub fabric: Option<String>,
+    #[serde(default)]
+    pub size_info: Option<String>,
+    #[serde(default)]
+    pub base_unit_cost: Option<f64>,
+    #[serde(default)]
+    pub landed_unit_cost: Option<f64>,
+    #[serde(default)]
+    pub retail_price: Option<f64>,
+    #[serde(default)]
+    pub discount_price: Option<f64>,
+    #[serde(default)]
+    pub source_trip_id: Option<i64>,
+    #[serde(default)]
+    pub qty_in_head_office: Option<i64>,
+    #[serde(default)]
+    pub qty_with_agents: Option<i64>,
+    #[serde(default)]
+    pub qty_sold: Option<i64>,
+    #[serde(default)]
+    pub qty_reserved: Option<i64>,
+    #[serde(default)]
+    pub profit_status: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -39,7 +68,10 @@ pub fn get_all_products(conn: &Connection) -> Result<Vec<Product>, rusqlite::Err
     let mut stmt = conn.prepare(
         "SELECT id, COALESCE(sku,''), name, category, color, design, season,
                 cost_price, sale_price, COALESCE(purchase_price, cost_price),
-                description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at
+                description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at,
+                product_code, brand, fabric, size_info, base_unit_cost, landed_unit_cost,
+                retail_price, discount_price, source_trip_id,
+                qty_in_head_office, qty_with_agents, qty_sold, qty_reserved, profit_status
          FROM products ORDER BY id DESC"
     )?;
     let product_iter = stmt.query_map([], |row| {
@@ -62,6 +94,20 @@ pub fn get_all_products(conn: &Connection) -> Result<Vec<Product>, rusqlite::Err
             supplier_id: row.get(15)?,
             created_at: row.get(16)?,
             updated_at: row.get(17)?,
+            product_code: row.get(18)?,
+            brand: row.get(19)?,
+            fabric: row.get(20)?,
+            size_info: row.get(21)?,
+            base_unit_cost: row.get(22)?,
+            landed_unit_cost: row.get(23)?,
+            retail_price: row.get(24)?,
+            discount_price: row.get(25)?,
+            source_trip_id: row.get(26)?,
+            qty_in_head_office: row.get(27)?,
+            qty_with_agents: row.get(28)?,
+            qty_sold: row.get(29)?,
+            qty_reserved: row.get(30)?,
+            profit_status: row.get(31)?,
         })
     })?;
     let mut products = Vec::new();
@@ -73,7 +119,10 @@ pub fn get_product_by_id(conn: &Connection, id: i64) -> Result<Product, rusqlite
     conn.query_row(
         "SELECT id, COALESCE(sku,''), name, category, color, design, season,
                 cost_price, sale_price, COALESCE(purchase_price, cost_price),
-                description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at
+                description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at,
+                product_code, brand, fabric, size_info, base_unit_cost, landed_unit_cost,
+                retail_price, discount_price, source_trip_id,
+                qty_in_head_office, qty_with_agents, qty_sold, qty_reserved, profit_status
          FROM products WHERE id = ?1",
         [id],
         |row| {
@@ -96,6 +145,20 @@ pub fn get_product_by_id(conn: &Connection, id: i64) -> Result<Product, rusqlite
                 supplier_id: row.get(15)?,
                 created_at: row.get(16)?,
                 updated_at: row.get(17)?,
+                product_code: row.get(18)?,
+                brand: row.get(19)?,
+                fabric: row.get(20)?,
+                size_info: row.get(21)?,
+                base_unit_cost: row.get(22)?,
+                landed_unit_cost: row.get(23)?,
+                retail_price: row.get(24)?,
+                discount_price: row.get(25)?,
+                source_trip_id: row.get(26)?,
+                qty_in_head_office: row.get(27)?,
+                qty_with_agents: row.get(28)?,
+                qty_sold: row.get(29)?,
+                qty_reserved: row.get(30)?,
+                profit_status: row.get(31)?,
             })
         },
     )

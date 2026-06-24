@@ -20,6 +20,21 @@ export interface Product {
   supplier_id?: number;
   created_at?: string;
   updated_at?: string;
+  // v0.11.0+ profit-mode fields (optional for backward compat)
+  product_code?: string;
+  brand?: string;
+  fabric?: string;
+  size_info?: string;
+  base_unit_cost?: number;
+  landed_unit_cost?: number;
+  retail_price?: number;
+  discount_price?: number;
+  source_trip_id?: number;
+  qty_in_head_office?: number;
+  qty_with_agents?: number;
+  qty_sold?: number;
+  qty_reserved?: number;
+  profit_status?: string;
 }
 
 export interface Customer {
