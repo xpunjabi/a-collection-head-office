@@ -7,6 +7,7 @@ mod customers;
 mod reports;
 mod locations;
 mod agents;
+mod purchase_trips;
 mod adapters;
 mod ai;
 mod automation;
@@ -91,6 +92,15 @@ fn main() {
             commands::update_customer_segment,
             commands::get_customer_segments,
             commands::get_stale_products,
+            // v0.11.2 — Purchase Trips
+            commands::get_purchase_trips,
+            commands::get_purchase_trip,
+            commands::create_purchase_trip,
+            commands::update_purchase_trip,
+            commands::delete_purchase_trip,
+            commands::add_trip_item,
+            commands::remove_trip_item,
+            commands::recalculate_trip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
