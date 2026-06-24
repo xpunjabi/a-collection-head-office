@@ -330,7 +330,10 @@ pub fn search_by_color(conn: &Connection, color: &str) -> Result<Vec<Product>, r
     let mut stmt = conn.prepare(
         "SELECT id, COALESCE(sku,''), name, category, color, design, season,
                 cost_price, sale_price, COALESCE(purchase_price, cost_price),
-                description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at
+                description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at,
+                product_code, brand, fabric, size_info, base_unit_cost, landed_unit_cost,
+                retail_price, discount_price, source_trip_id,
+                qty_in_head_office, qty_with_agents, qty_sold, qty_reserved, profit_status
          FROM products WHERE color LIKE ?1 AND status='active' ORDER BY name"
     )?;
     let rows = stmt.query_map([&search], |row| {
@@ -341,6 +344,11 @@ pub fn search_by_color(conn: &Connection, color: &str) -> Result<Vec<Product>, r
             description: row.get(10)?, tags: row.get(11)?, stock_quantity: row.get(12)?,
             status: row.get(13)?, images: row.get(14)?, supplier_id: row.get(15)?,
             created_at: row.get(16)?, updated_at: row.get(17)?,
+            product_code: row.get(18)?, brand: row.get(19)?, fabric: row.get(20)?,
+            size_info: row.get(21)?, base_unit_cost: row.get(22)?, landed_unit_cost: row.get(23)?,
+            retail_price: row.get(24)?, discount_price: row.get(25)?, source_trip_id: row.get(26)?,
+            qty_in_head_office: row.get(27)?, qty_with_agents: row.get(28)?,
+            qty_sold: row.get(29)?, qty_reserved: row.get(30)?, profit_status: row.get(31)?,
         })
     })?;
     let mut products = Vec::new();

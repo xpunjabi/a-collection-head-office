@@ -3,8 +3,8 @@ use crate::inventory::{self, InventorySummary, LowStockItem, DeadStockItem, Best
 use crate::customers::{self, Customer, OrderItemInput, OrderHistory};
 use crate::reports::{self, SalesReport, InventoryReport, CustomerSummaryReport};
 use crate::locations::{self, Location};
-use crate::agents::{self, Agent, AgentSummary, AgentLedgerEntry};
-use crate::purchase_trips::{self, PurchaseTrip, PurchaseTripItem, PurchaseTripSummary};
+use crate::agents::{self, AgentSummary, AgentLedgerEntry};
+use crate::purchase_trips::{self, PurchaseTripSummary};
 use crate::adapters::duckduckgo::{self, WebEvidence};
 use crate::ai::{self, AiResponse, KnowledgeEntry};
 use crate::utils;
@@ -473,6 +473,23 @@ pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai:
         supplier_id: None,
         created_at: now.clone(),
         updated_at: now,
+        // v0.11.0+ profit-mode fields — default to None/empty for manually
+        // created drafts. These get populated when a purchase trip item is
+        // linked or when stock is sent to an agent.
+        product_code: None,
+        brand: None,
+        fabric: None,
+        size_info: None,
+        base_unit_cost: None,
+        landed_unit_cost: None,
+        retail_price: None,
+        discount_price: None,
+        source_trip_id: None,
+        qty_in_head_office: None,
+        qty_with_agents: None,
+        qty_sold: None,
+        qty_reserved: None,
+        profit_status: None,
     };
     let conn = state.0.lock().await;
     let id = crate::catalog::add_product(&conn, &product).map_err(|e| e.to_string())?;
@@ -567,6 +584,23 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
         supplier_id: None,
         created_at: now.clone(),
         updated_at: now,
+        // v0.11.0+ profit-mode fields — default to None for AI-generated
+        // catalog drafts. These get populated when a purchase trip item is
+        // linked or when stock is sent to an agent.
+        product_code: None,
+        brand: draft.brand.clone(),
+        fabric: draft.fabric.clone(),
+        size_info: None,
+        base_unit_cost: None,
+        landed_unit_cost: None,
+        retail_price: None,
+        discount_price: None,
+        source_trip_id: None,
+        qty_in_head_office: None,
+        qty_with_agents: None,
+        qty_sold: None,
+        qty_reserved: None,
+        profit_status: None,
     };
     let id = crate::catalog::add_product(&conn, &product).map_err(|e| e.to_string())?;
     Ok(id)
