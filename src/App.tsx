@@ -10,6 +10,7 @@ import {
   Settings as SettingsIcon,
   MapPin,
   UserCircle,
+  Megaphone,
   ChevronLeft,
   Sparkles,
   MessageSquare
@@ -25,11 +26,13 @@ import Reports from './pages/Reports'
 import SettingsPage from './pages/Settings'
 import LocationsPage from './pages/Locations'
 import AgentsPage from './pages/Agents'
+import ShareCenter from './pages/ShareCenter'
 import AiWorkspace from './components/AiWorkspace'
 
 const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'catalog', label: 'Catalog', icon: BookOpen },
+  { id: 'share_center', label: 'Share Center', icon: Megaphone },
   { id: 'social', label: 'Social Hub', icon: Share2 },
   { id: 'customers', label: 'Customers', icon: Users },
   { id: 'inventory', label: 'Inventory', icon: Package },
@@ -53,6 +56,7 @@ function App() {
     switch (currentTab) {
       case 'dashboard': return <Dashboard />
       case 'catalog': return <Catalog />
+      case 'share_center': return <ShareCenter />
       case 'social': return <SocialHub />
       case 'customers': return <Customers />
       case 'inventory': return <Inventory />

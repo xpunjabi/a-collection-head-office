@@ -84,6 +84,13 @@ fn main() {
             commands::report_agent_sale,
             commands::receive_agent_cash,
             commands::adjust_agent_balance,
+            // v0.11.1 — Share Center
+            commands::log_share,
+            commands::get_share_logs,
+            commands::get_customers_by_segment,
+            commands::update_customer_segment,
+            commands::get_customer_segments,
+            commands::get_stale_products,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

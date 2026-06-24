@@ -316,6 +316,16 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
     // (idempotent — only inserts agents for locations that don't have a
     // matching agent yet).
     sync_locations_to_agents(conn)?;
+
+    // ============================================================
+    // v0.11.1 — Share Center enhancements
+    // ============================================================
+    // Add segment column to customers for bulk WhatsApp broadcasting.
+    // segment values: 'women', 'girls', 'vip', 'agent', 'general', etc.
+    // User-defined — stored as free-form text so they can create custom
+    // segments beyond the defaults.
+    add_col_if_missing(conn, "customers", "segment", "TEXT DEFAULT 'general'")?;
+    add_col_if_missing(conn, "customers", "is_active", "INTEGER NOT NULL DEFAULT 1")?;
     Ok(())
 }
 
