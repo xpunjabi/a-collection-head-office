@@ -39,7 +39,13 @@ pub fn get_images_dir() -> PathBuf {
 /// Decimals are kept (2 places) for accounting precision. UI rendering
 /// can strip them where appropriate.
 pub fn format_money(amount: f64, currency: &str) -> String {
-    let prefix = match currency.to_uppercase().as_str() {
+    // Bind to_uppercase() to a let so the returned String lives long enough
+    // for the match arms to borrow from it. Without this binding, Rust's
+    // borrow checker complains with E0716 (temporary value dropped while
+    // borrowed) because currency.to_uppercase() creates a temporary that
+    // would be freed at the end of the match statement.
+    let currency_upper = currency.to_uppercase();
+    let prefix = match currency_upper.as_str() {
         "PKR" => "Rs.",
         "USD" => "$",
         "EUR" => "€",

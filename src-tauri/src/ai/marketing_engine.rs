@@ -77,7 +77,7 @@ Your task is to generate engaging social media content for a product. \
 Write in attractive Roman Urdu or English. \
 Return ONLY valid JSON without any markdown formatting, code blocks, or extra text.";
 
-    let (platform_instruction, hashtag_count, trending_tags) = match platform {
+    let (platform_instruction, hashtag_count, _trending_tags) = match platform {
         Some(p) => {
             let count = platform_hashtag_count(p);
             let trending = platform_trending_tags(p);
