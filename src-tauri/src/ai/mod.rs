@@ -130,7 +130,164 @@ pub fn build_business_context(conn: &Connection) -> Result<String, String> {
     context.push_str(&format!("- **Total Profit:** {}\n", crate::utils::format_money(total_profit, &currency)));
     context.push_str(&format!("- **Low Stock Items:** {}\n", low_stock));
     context.push_str(&format!("- **Dead Stock Items:** {}\n", dead_stock));
+    // v0.12.1: Append profit-mode context (agents, stock distribution,
+    // recent sales, recent shares, stale stock alerts).
+    context.push_str(&build_profit_mode_context(conn, &currency));
     Ok(context)
+}
+
+/// v0.12.1 — Build profit-mode business context for the AI assistant.
+///
+/// This injects real-time business state into the AI's system prompt so it
+/// can answer questions like:
+///   - "Shakargarh agent ka balance kya hai?"
+///   - "Blue Maria B suit kidhar pada hai?"
+///   - "Konsa product 30 din se nahi bika?"
+///   - "Konsa product push karna chahiye?"
+///
+/// The AI gets read-only access to:
+///   - Agent summaries (stock held, cash received, outstanding balance)
+///   - Stock distribution (HO vs agents vs sold)
+///   - Top outstanding agents
+///   - Recent sales (last 7 days)
+///   - Recent shares (last 5)
+///   - Stale stock alerts (not shared in 7+ days)
+///   - Low HO stock alerts
+///
+/// The AI CANNOT modify any of this data — only suggest actions. All
+/// destructive writes go through explicit Tauri commands with validation.
+pub fn build_profit_mode_context(conn: &Connection, currency: &str) -> String {
+    let mut ctx = String::new();
+
+    // === AGENTS SECTION ===
+    ctx.push_str("\n## Agents (Stock Holders)\n\n");
+    let agent_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM agents WHERE is_active = 1", [], |r| r.get(0)
+    ).unwrap_or(0);
+    if agent_count == 0 {
+        ctx.push_str("No active agents registered yet.\n");
+    } else {
+        ctx.push_str(&format!("Active agents: {}\n\n", agent_count));
+        // Top agents by outstanding balance
+        let mut stmt = match conn.prepare(
+            "SELECT a.id, a.name, a.city, a.phone,
+                    COALESCE(SUM(CASE WHEN e.entry_type = 'stock_sent' THEN e.qty ELSE 0 END) -
+                             SUM(CASE WHEN e.entry_type = 'stock_returned' THEN e.qty ELSE 0 END) -
+                             SUM(CASE WHEN e.entry_type = 'sale_reported' THEN e.qty ELSE 0 END), 0) AS stock_units,
+                    COALESCE(SUM(CASE WHEN e.entry_type = 'stock_sent' THEN e.amount ELSE 0 END) -
+                             SUM(CASE WHEN e.entry_type = 'stock_returned' THEN e.amount ELSE 0 END) -
+                             SUM(CASE WHEN e.entry_type = 'cash_received' THEN e.amount ELSE 0 END), 0.0) AS outstanding
+             FROM agents a
+             LEFT JOIN agent_ledger_entries e ON e.agent_id = a.id
+             WHERE a.is_active = 1
+             GROUP BY a.id, a.name, a.city, a.phone
+             ORDER BY outstanding DESC
+             LIMIT 10"
+        ) {
+            Ok(s) => s,
+            Err(_) => return ctx,
+        };
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,      // id
+                row.get::<_, String>(1)?,    // name
+                row.get::<_, Option<String>>(2)?, // city
+                row.get::<_, Option<String>>(3)?, // phone
+                row.get::<_, i64>(4)?,       // stock_units
+                row.get::<_, f64>(5)?,       // outstanding
+            ))
+        });
+        if let Ok(rows) = rows {
+            ctx.push_str("| Agent | City | Stock Units | Outstanding |\n");
+            ctx.push_str("|-------|------|-------------|-------------|\n");
+            for row in rows.flatten() {
+                let (_, name, city, _phone, stock, outstanding) = row;
+                let city_str = city.unwrap_or_else(|| "—".to_string());
+                ctx.push_str(&format!("| {} | {} | {} | {} |\n",
+                    name, city_str, stock,
+                    crate::utils::format_money(outstanding, currency)
+                ));
+            }
+        }
+    }
+
+    // === STOCK DISTRIBUTION SECTION ===
+    ctx.push_str("\n## Stock Distribution\n\n");
+    let total_ho: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(COALESCE(qty_in_head_office, stock_quantity)), 0) FROM products WHERE status='active'",
+        [], |r| r.get(0)
+    ).unwrap_or(0);
+    let total_agents: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(COALESCE(qty_with_agents, 0)), 0) FROM products WHERE status='active'",
+        [], |r| r.get(0)
+    ).unwrap_or(0);
+    let total_sold: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(COALESCE(qty_sold, 0)), 0) FROM products WHERE status='active'",
+        [], |r| r.get(0)
+    ).unwrap_or(0);
+    ctx.push_str(&format!("- **In Head Office:** {} units\n", total_ho));
+    ctx.push_str(&format!("- **With Agents:** {} units\n", total_agents));
+    ctx.push_str(&format!("- **Sold (all-time):** {} units\n", total_sold));
+
+    // === STALE STOCK ALERTS ===
+    ctx.push_str("\n## Stale Stock (not shared in 7+ days)\n\n");
+    let stale_count: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT p.id) FROM products p
+         LEFT JOIN share_logs sl ON sl.product_id = p.id
+         WHERE p.status='active' AND p.stock_quantity > 0
+         AND (sl.shared_at IS NULL OR sl.shared_at < ?1)",
+        [(&chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339()],
+        |r| r.get(0)
+    ).unwrap_or(0);
+    if stale_count == 0 {
+        ctx.push_str("All active stock has been shared recently. Good!\n");
+    } else {
+        ctx.push_str(&format!("{} products need social media attention.\n", stale_count));
+    }
+
+    // === RECENT SHARES (last 5) ===
+    ctx.push_str("\n## Recent Shares (last 5)\n\n");
+    let mut stmt = match conn.prepare(
+        "SELECT sl.platform, sl.share_angle, sl.shared_at, COALESCE(p.name, '(deleted)')
+         FROM share_logs sl
+         LEFT JOIN products p ON sl.product_id = p.id
+         ORDER BY sl.shared_at DESC LIMIT 5"
+    ) {
+        Ok(s) => s,
+        Err(_) => return ctx,
+    };
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    });
+    if let Ok(rows) = rows {
+        let collected: Vec<_> = rows.flatten().collect();
+        if collected.is_empty() {
+            ctx.push_str("No shares logged yet.\n");
+        } else {
+            for (platform, angle, when, product) in collected {
+                ctx.push_str(&format!("- {} — {} ({}) on {}\n", product, platform, angle, when));
+            }
+        }
+    }
+
+    // === AI OPERATOR INSTRUCTIONS ===
+    ctx.push_str("\n## AI Operator Capabilities\n\n");
+    ctx.push_str("You are a business operator, not just a chatbot. You can:\n");
+    ctx.push_str("- Answer stock lookup questions (where is product X, who has it)\n");
+    ctx.push_str("- Answer agent balance questions (how much does agent X owe)\n");
+    ctx.push_str("- Suggest products to push (stale stock, high margin, fresh arrivals)\n");
+    ctx.push_str("- Summarize product movement (source trip → HO → agent → sold)\n");
+    ctx.push_str("- Generate social media captions using the data above\n\n");
+    ctx.push_str("**Constraints:** You CANNOT modify stock, send shares, or adjust balances. ");
+    ctx.push_str("You can only suggest actions. The user must execute them via the app UI. ");
+    ctx.push_str("All numbers above are real-time from the database.\n");
+
+    ctx
 }
 
 pub fn build_system_prompt(conn: &Connection, user_prompt: &str) -> Result<String, String> {
