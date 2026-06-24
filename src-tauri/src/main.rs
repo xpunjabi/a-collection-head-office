@@ -6,6 +6,7 @@ mod inventory;
 mod customers;
 mod reports;
 mod locations;
+mod agents;
 mod adapters;
 mod ai;
 mod automation;
@@ -71,6 +72,18 @@ fn main() {
             commands::generate_social_post,
             commands::generate_marketing,
             commands::init_database,
+            // v0.11.0 — Agents
+            commands::get_agents,
+            commands::get_agent,
+            commands::add_agent,
+            commands::update_agent,
+            commands::delete_agent,
+            commands::get_agent_ledger,
+            commands::send_stock_to_agent,
+            commands::return_stock_from_agent,
+            commands::report_agent_sale,
+            commands::receive_agent_cash,
+            commands::adjust_agent_balance,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

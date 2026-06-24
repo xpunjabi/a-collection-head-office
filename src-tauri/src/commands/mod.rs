@@ -3,6 +3,7 @@ use crate::inventory::{self, InventorySummary, LowStockItem, DeadStockItem, Best
 use crate::customers::{self, Customer, OrderItemInput, OrderHistory};
 use crate::reports::{self, SalesReport, InventoryReport, CustomerSummaryReport};
 use crate::locations::{self, Location};
+use crate::agents::{self, Agent, AgentSummary, AgentLedgerEntry};
 use crate::adapters::duckduckgo::{self, WebEvidence};
 use crate::ai::{self, AiResponse, KnowledgeEntry};
 use crate::utils;
@@ -742,4 +743,193 @@ pub async fn init_database(state: State<'_, DbState>) -> Result<(), String> {
     // because all migration steps are idempotent (CREATE TABLE IF NOT EXISTS,
     // INSERT OR IGNORE, add_col_if_missing).
     crate::database::run_migrations_public(&mut conn).map_err(|e| e.to_string())
+}
+
+// ============================================================
+// v0.11.0 — Agents (replaces Locations as primary stock-movement entity)
+// ============================================================
+
+#[tauri::command]
+pub async fn get_agents(state: State<'_, DbState>) -> Result<Vec<AgentSummary>, String> {
+    let conn = state.0.lock().await;
+    agents::get_all_agent_summaries(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_agent(state: State<'_, DbState>, id: i64) -> Result<AgentSummary, String> {
+    let conn = state.0.lock().await;
+    agents::get_agent_summary(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn add_agent(
+    state: State<'_, DbState>,
+    name: String,
+    phone: Option<String>,
+    city: Option<String>,
+    area: Option<String>,
+    address_notes: Option<String>,
+    notes: Option<String>,
+) -> Result<i64, String> {
+    let conn = state.0.lock().await;
+    agents::add_agent(
+        &conn, &name,
+        phone.as_deref(), city.as_deref(), area.as_deref(),
+        address_notes.as_deref(), notes.as_deref(),
+    ).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_agent(
+    state: State<'_, DbState>,
+    id: i64,
+    name: String,
+    phone: Option<String>,
+    city: Option<String>,
+    area: Option<String>,
+    address_notes: Option<String>,
+    notes: Option<String>,
+    is_active: bool,
+) -> Result<(), String> {
+    let conn = state.0.lock().await;
+    agents::update_agent(
+        &conn, id, &name,
+        phone.as_deref(), city.as_deref(), area.as_deref(),
+        address_notes.as_deref(), notes.as_deref(), is_active,
+    ).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_agent(state: State<'_, DbState>, id: i64) -> Result<(), String> {
+    let conn = state.0.lock().await;
+    agents::delete_agent(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_agent_ledger(
+    state: State<'_, DbState>,
+    agent_id: i64,
+    limit: Option<i64>,
+) -> Result<Vec<AgentLedgerEntry>, String> {
+    let conn = state.0.lock().await;
+    let limit = limit.unwrap_or(50);
+    agents::get_agent_ledger_entries(&conn, agent_id, limit).map_err(|e| e.to_string())
+}
+
+/// Send stock from Head Office to an agent.
+/// Validates that the product has enough qty_in_head_office before sending.
+#[tauri::command]
+pub async fn send_stock_to_agent(
+    state: State<'_, DbState>,
+    agent_id: i64,
+    product_id: i64,
+    qty: i64,
+    unit_price: f64,
+    notes: Option<String>,
+) -> Result<i64, String> {
+    if qty <= 0 {
+        return Err("Quantity must be positive.".to_string());
+    }
+    let conn = state.0.lock().await;
+    // Validate: product must have enough stock in Head Office.
+    let ho_qty: i64 = conn.query_row(
+        "SELECT COALESCE(qty_in_head_office, stock_quantity, 0) FROM products WHERE id = ?1",
+        rusqlite::params![product_id],
+        |r| r.get(0),
+    ).map_err(|e| format!("Product not found: {}", e))?;
+    if ho_qty < qty {
+        return Err(format!(
+            "Insufficient stock in Head Office. Available: {}, requested: {}.",
+            ho_qty, qty
+        ));
+    }
+    agents::send_stock_to_agent(
+        &conn, agent_id, product_id, qty, unit_price, notes.as_deref(),
+    ).map_err(|e| e.to_string())
+}
+
+/// Return stock from an agent back to Head Office.
+/// Validates that the agent has enough stock of this product.
+#[tauri::command]
+pub async fn return_stock_from_agent(
+    state: State<'_, DbState>,
+    agent_id: i64,
+    product_id: i64,
+    qty: i64,
+    unit_price: f64,
+    notes: Option<String>,
+) -> Result<i64, String> {
+    if qty <= 0 {
+        return Err("Quantity must be positive.".to_string());
+    }
+    let conn = state.0.lock().await;
+    // Validate: agent must have enough stock of this product.
+    let agent_qty: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(CASE WHEN entry_type = 'stock_sent' THEN qty ELSE 0 END) -
+                          SUM(CASE WHEN entry_type = 'stock_returned' THEN qty ELSE 0 END) -
+                          SUM(CASE WHEN entry_type = 'sale_reported' THEN qty ELSE 0 END), 0)
+         FROM agent_ledger_entries WHERE agent_id = ?1 AND product_id = ?2",
+        rusqlite::params![agent_id, product_id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+    if agent_qty < qty {
+        return Err(format!(
+            "Agent does not have enough stock of this product. Agent has: {}, requested: {}.",
+            agent_qty, qty
+        ));
+    }
+    agents::return_stock_from_agent(
+        &conn, agent_id, product_id, qty, unit_price, notes.as_deref(),
+    ).map_err(|e| e.to_string())
+}
+
+/// Agent reports a sale (stock sold by agent to end customer).
+#[tauri::command]
+pub async fn report_agent_sale(
+    state: State<'_, DbState>,
+    agent_id: i64,
+    product_id: i64,
+    qty: i64,
+    unit_price: f64,
+    notes: Option<String>,
+) -> Result<i64, String> {
+    if qty <= 0 {
+        return Err("Quantity must be positive.".to_string());
+    }
+    let conn = state.0.lock().await;
+    agents::report_agent_sale(
+        &conn, agent_id, product_id, qty, unit_price, notes.as_deref(),
+    ).map_err(|e| e.to_string())
+}
+
+/// Record cash received from an agent.
+#[tauri::command]
+pub async fn receive_agent_cash(
+    state: State<'_, DbState>,
+    agent_id: i64,
+    amount: f64,
+    notes: Option<String>,
+) -> Result<i64, String> {
+    if amount <= 0.0 {
+        return Err("Amount must be positive.".to_string());
+    }
+    let conn = state.0.lock().await;
+    agents::receive_agent_cash(&conn, agent_id, amount, notes.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Manual balance adjustment. Notes are MANDATORY.
+#[tauri::command]
+pub async fn adjust_agent_balance(
+    state: State<'_, DbState>,
+    agent_id: i64,
+    amount: f64,
+    notes: String,
+) -> Result<i64, String> {
+    if notes.trim().is_empty() {
+        return Err("Notes are mandatory for balance adjustments.".to_string());
+    }
+    let conn = state.0.lock().await;
+    agents::adjust_agent_balance(&conn, agent_id, amount, &notes)
+        .map_err(|e| e.to_string())
 }

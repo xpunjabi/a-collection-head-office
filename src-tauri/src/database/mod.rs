@@ -157,12 +157,165 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
     add_col_if_missing(conn, "products", "supplier_id", "INTEGER DEFAULT NULL")?;
     add_col_if_missing(conn, "products", "purchase_price", "REAL DEFAULT 0.0")?;
 
+    // ============================================================
+    // v0.11.0 — Profit-Mode Refactor: Data Model Foundation
+    // ============================================================
+    // New tables for the profit-first operating system. Additive only —
+    // no existing tables dropped, no existing data touched.
+
+    // --- purchase_trips: Faisalabad buying trips with landed cost ---
+    conn.execute("CREATE TABLE IF NOT EXISTS purchase_trips (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trip_code TEXT NOT NULL UNIQUE,
+        trip_date TEXT NOT NULL,
+        source_city TEXT NOT NULL DEFAULT 'Faisalabad',
+        supplier_notes TEXT,
+        travel_cost REAL NOT NULL DEFAULT 0.0,
+        transport_cost REAL NOT NULL DEFAULT 0.0,
+        food_cost REAL NOT NULL DEFAULT 0.0,
+        loading_cost REAL NOT NULL DEFAULT 0.0,
+        misc_cost REAL NOT NULL DEFAULT 0.0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );", [])?;
+
+    // --- purchase_trip_items: items purchased on a trip, with cost allocation ---
+    conn.execute("CREATE TABLE IF NOT EXISTS purchase_trip_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trip_id INTEGER NOT NULL,
+        product_id INTEGER,
+        qty_purchased INTEGER NOT NULL DEFAULT 0,
+        unit_purchase_cost REAL NOT NULL DEFAULT 0.0,
+        total_purchase_cost REAL NOT NULL DEFAULT 0.0,
+        expense_allocation_amount REAL NOT NULL DEFAULT 0.0,
+        landed_unit_cost REAL NOT NULL DEFAULT 0.0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(trip_id) REFERENCES purchase_trips(id) ON DELETE CASCADE,
+        FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
+    );", [])?;
+
+    // --- agents: replaces locations concept (person + place unified) ---
+    // One agent = one person at a place. Existing locations data is migrated
+    // to agents by sync_locations_to_agents() below.
+    conn.execute("CREATE TABLE IF NOT EXISTS agents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        phone TEXT,
+        city TEXT,
+        area TEXT,
+        address_notes TEXT,
+        notes TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );", [])?;
+
+    // --- agent_ledger_entries: unified stock + cash movement log ---
+    // This is THE single source of truth for agent stock and money flow.
+    // entry_type enum: stock_sent | stock_returned | sale_reported |
+    //                  cash_received | balance_adjustment
+    conn.execute("CREATE TABLE IF NOT EXISTS agent_ledger_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id INTEGER NOT NULL,
+        product_id INTEGER,
+        entry_type TEXT NOT NULL,
+        qty INTEGER NOT NULL DEFAULT 0,
+        unit_price REAL NOT NULL DEFAULT 0.0,
+        amount REAL NOT NULL DEFAULT 0.0,
+        reference_code TEXT,
+        notes TEXT,
+        entry_date TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE,
+        FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
+    );", [])?;
+
+    // --- share_logs: social sharing audit trail ---
+    // platform enum: whatsapp_status | whatsapp_direct | facebook |
+    //                instagram | tiktok
+    conn.execute("CREATE TABLE IF NOT EXISTS share_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER,
+        platform TEXT NOT NULL,
+        share_angle TEXT,
+        caption_text TEXT,
+        shared_by TEXT,
+        shared_at TEXT NOT NULL,
+        notes TEXT,
+        FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
+    );", [])?;
+
+    // --- sales: replaces orders table (single sales concept) ---
+    // sale_channel enum: head_office | whatsapp | facebook | instagram |
+    //                    tiktok | agent
+    conn.execute("CREATE TABLE IF NOT EXISTS sales (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        sale_channel TEXT NOT NULL DEFAULT 'head_office',
+        sale_type TEXT,
+        agent_id INTEGER,
+        qty INTEGER NOT NULL DEFAULT 1,
+        unit_sale_price REAL NOT NULL DEFAULT 0.0,
+        total_sale_amount REAL NOT NULL DEFAULT 0.0,
+        customer_name TEXT,
+        customer_phone TEXT,
+        notes TEXT,
+        sale_date TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE RESTRICT,
+        FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE SET NULL
+    );", [])?;
+
+    // --- products table: additive column extensions for profit-mode ---
+    // Existing columns (sku, name, cost_price, sale_price, etc.) are kept
+    // untouched. These new columns enable profit-mode features.
+    add_col_if_missing(conn, "products", "source_trip_id", "INTEGER DEFAULT NULL")?;
+    add_col_if_missing(conn, "products", "base_unit_cost", "REAL DEFAULT 0.0")?;
+    add_col_if_missing(conn, "products", "landed_unit_cost", "REAL DEFAULT 0.0")?;
+    add_col_if_missing(conn, "products", "retail_price", "REAL")?;
+    add_col_if_missing(conn, "products", "discount_price", "REAL")?;
+    add_col_if_missing(conn, "products", "size_info", "TEXT")?;
+    add_col_if_missing(conn, "products", "brand", "TEXT")?;
+    add_col_if_missing(conn, "products", "fabric", "TEXT")?;
+    add_col_if_missing(conn, "products", "qty_with_agents", "INTEGER DEFAULT 0")?;
+    add_col_if_missing(conn, "products", "qty_sold", "INTEGER DEFAULT 0")?;
+    add_col_if_missing(conn, "products", "qty_reserved", "INTEGER DEFAULT 0")?;
+    add_col_if_missing(conn, "products", "profit_status", "TEXT DEFAULT 'in_head_office'")?;
+    // qty_in_head_office mirrors the legacy stock_quantity column but with
+    // a clearer name in the profit-mode context. Backfilled from
+    // stock_quantity on first migration; thereafter maintained by the
+    // agent ledger functions (send_stock_to_agent, return_stock_from_agent).
+    add_col_if_missing(conn, "products", "qty_in_head_office", "INTEGER DEFAULT 0")?;
+    // Backfill qty_in_head_office from existing stock_quantity for legacy products.
+    let _ = conn.execute(
+        "UPDATE products SET qty_in_head_office = stock_quantity WHERE qty_in_head_office = 0 AND stock_quantity > 0",
+        [],
+    );
+    // Backfill retail_price from existing sale_price for legacy products.
+    let _ = conn.execute(
+        "UPDATE products SET retail_price = sale_price WHERE retail_price IS NULL AND sale_price IS NOT NULL",
+        [],
+    );
+    // Backfill base_unit_cost from existing purchase_price (or cost_price) for legacy products.
+    let _ = conn.execute(
+        "UPDATE products SET base_unit_cost = COALESCE(purchase_price, cost_price, 0.0) WHERE base_unit_cost = 0.0",
+        [],
+    );
+
     seed_initial_data(conn)?;
     ensure_business_profile(conn)?;
     seed_locations(conn)?;
     // Issue #6 fix: sync business_profile.sales_areas into locations table
     // on every startup. Idempotent — only inserts missing rows.
     sync_sales_areas_to_locations(conn)?;
+    // v0.11.0: migrate any existing locations into the new agents table
+    // (idempotent — only inserts agents for locations that don't have a
+    // matching agent yet).
+    sync_locations_to_agents(conn)?;
     Ok(())
 }
 
@@ -294,6 +447,60 @@ fn sync_sales_areas_to_locations(conn: &Connection) -> Result<()> {
             let _ = conn.execute(
                 "INSERT OR IGNORE INTO locations (name, address, created_at) VALUES (?1, ?2, ?3)",
                 rusqlite::params![name, "", &now],
+            );
+        }
+    }
+    Ok(())
+}
+
+/// v0.11.0: One-time (idempotent) migration that creates an agent entry for
+/// each existing location. This bridges the old locations table to the new
+/// agents table so users don't lose their existing location data.
+///
+/// Each location becomes an agent with:
+///   - name = location name (e.g., "Narowal", "Shakargarh")
+///   - agent_code = "LOC-<id>" (derived from location id, stable)
+///   - city = location name
+///   - is_active = same as location.is_active
+///
+/// Safe to run on every startup — INSERT OR IGNORE skips agents that already
+/// exist (matched by agent_code).
+fn sync_locations_to_agents(conn: &Connection) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    // Select all locations and insert a matching agent for each (if not exists).
+    let mut stmt = match conn.prepare("SELECT id, name, address, is_active FROM locations") {
+        Ok(s) => s,
+        Err(_) => return Ok(()), // locations table might not exist yet — skip
+    };
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, i64>(3)?,
+        ))
+    });
+    let rows = match rows {
+        Ok(r) => r,
+        Err(_) => return Ok(()),
+    };
+    for row in rows {
+        if let Ok((loc_id, name, address, is_active)) = row {
+            let agent_code = format!("LOC-{}", loc_id);
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO agents (agent_code, name, phone, city, area, address_notes, notes, is_active, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                rusqlite::params![
+                    &agent_code,
+                    &name,
+                    "", // phone — empty, user can fill later
+                    &name, // city = location name
+                    "", // area — empty
+                    address.unwrap_or_default(),
+                    "Migrated from locations table",
+                    is_active,
+                    &now,
+                    &now,
+                ],
             );
         }
     }
