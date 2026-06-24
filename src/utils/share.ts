@@ -100,12 +100,16 @@ export function buildProductShareText(opts: {
 
 /**
  * Share `text` to the given platform.
- * - WhatsApp / Facebook / Twitter/X: opens the platform's share URL in the
- *   user's default system browser (via Tauri shell plugin on desktop, or
- *   window.open() in plain web context).
- * - Instagram: copies text to clipboard and shows an alert telling the user
- *   to paste it in Instagram (Instagram does not support third-party web
- *   share URLs).
+ *
+ * Platform behavior:
+ * - WhatsApp: opens wa.me/?text=... (works on web + mobile, pre-fills text)
+ * - Twitter/X: opens twitter.com/intent/tweet?text=... (pre-fills text)
+ * - Facebook: COPIES text to clipboard + opens Facebook + alerts user.
+ *   Facebook deprecated the `quote` parameter in sharer.php — the sharer
+ *   dialog no longer accepts pre-filled text via URL. The user must
+ *   manually paste (Ctrl+V) in the Facebook post composer.
+ * - Instagram: copies text to clipboard + alerts user (Instagram has no
+ *   web share URL at all).
  *
  * Returns true if the share was initiated, false if the platform is unknown.
  */
@@ -117,8 +121,21 @@ export async function shareToPlatform(platform: SharePlatform, text: string): Pr
       url = `https://wa.me/?text=${encoded}`
       break
     case 'facebook':
-      url = `https://www.facebook.com/sharer/sharer.php?quote=${encoded}`
-      break
+      // Facebook deprecated the `quote` parameter in sharer.php. Opening
+      // sharer.php?quote=... shows an EMPTY share dialog. Instead, we:
+      // 1. Copy the caption to clipboard so the user can paste it
+      // 2. Open Facebook's home page (where they can create a post)
+      // 3. Alert the user to paste (Ctrl+V) in the post composer
+      try {
+        await navigator.clipboard.writeText(text)
+      } catch {
+        // Clipboard might fail in some contexts — alert with manual copy
+      }
+      url = 'https://www.facebook.com/'
+      // Show alert BEFORE opening the URL so the user knows to paste
+      alert('Facebook caption copied to clipboard!\n\nFacebook no longer allows pre-filling posts via links. When Facebook opens, click "Create Post" and press Ctrl+V to paste your caption.')
+      await openExternalUrl(url)
+      return true
     case 'twitter/x':
       url = `https://twitter.com/intent/tweet?text=${encoded}`
       break

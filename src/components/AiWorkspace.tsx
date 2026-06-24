@@ -340,7 +340,10 @@ export default function AiWorkspace() {
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {aiMessages.map((msg, i) => (
           <div key={i}>
-            <div className={`text-sm ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
+            <div
+              dir="ltr"
+              className={`text-sm ${msg.role === 'user' ? 'text-right' : 'text-left'}`}
+            >
               <span
                 className={`inline-block px-3 py-2 rounded-xl max-w-[95%] ${
                   msg.role === 'user'
