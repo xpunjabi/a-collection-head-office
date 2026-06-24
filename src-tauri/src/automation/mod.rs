@@ -103,9 +103,9 @@ fn update_automation_last_run(conn: &Connection, name: &str) -> Result<(), Strin
 
 fn compile_weekly_summary(conn: &Connection) -> Result<String, String> {
     let last_week = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
-    
+
     let (total_orders, sales, profit): (i64, f64, f64) = conn.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(total_amount), 0.0), COALESCE(SUM(profit), 0.0) 
+        "SELECT COUNT(*), COALESCE(SUM(total_amount), 0.0), COALESCE(SUM(profit), 0.0)
          FROM orders WHERE order_date >= ?1",
         [&last_week],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -117,6 +117,14 @@ fn compile_weekly_summary(conn: &Connection) -> Result<String, String> {
         |row| row.get(0),
     ).map_err(|e| e.to_string())?;
 
+    // Read currency from business_profile. Reuse the existing public getter
+    // so the weekly report uses the same currency as the AI business context.
+    // Previously hardcoded as "${:.2}" which was incorrect for PKR business.
+    let currency = {
+        let profile = crate::ai::get_business_profile(conn).unwrap_or_default();
+        profile["currency"].as_str().unwrap_or("PKR").to_string()
+    };
+
     let report = format!(
         "=========================================\n\
          WEEKLY BUSINESS SUMMARY REPORT\n\
@@ -124,16 +132,16 @@ fn compile_weekly_summary(conn: &Connection) -> Result<String, String> {
          =========================================\n\n\
          Sales Activity (Last 7 Days):\n\
          - Total Orders: {}\n\
-         - Gross Sales: ${:.2}\n\
-         - Total Profit: ${:.2}\n\n\
+         - Gross Sales: {}\n\
+         - Total Profit: {}\n\n\
          Inventory Health:\n\
          - Low Stock Items: {}\n\n\
          Generated automatically by A Collection Head Office Operating System.\n\
          =========================================",
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
         total_orders,
-        sales,
-        profit,
+        crate::utils::format_money(sales, &currency),
+        crate::utils::format_money(profit, &currency),
         low_stock_count
     );
 

@@ -304,10 +304,16 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
             }
             Ok(None) => {
                 println!("[Local Match] No match found. Proceeding to web evidence + AI draft.");
-                let (api_key, model) = {
+                // Capture provider along with api_key + model so we can pass
+                // it to catalog_composer. Previously cfg.0 (provider) was
+                // discarded, causing catalog_composer to silently use
+                // hardcoded "gemini" — meaning OpenAI/Claude/Ollama users
+                // would get a Gemini API call (which fails without a Gemini
+                // API key).
+                let (provider, api_key, model) = {
                     let conn = state.0.lock().await;
                     let cfg = ai::get_ai_config(&conn)?;
-                    (cfg.1.clone(), cfg.2.clone())
+                    (cfg.0.clone(), cfg.1.clone(), cfg.2.clone())
                 };
 
                 // Build search query from extraction text
@@ -333,7 +339,7 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
                 };
 
                 match crate::ai::catalog_composer::generate_catalog_draft(
-                    extraction, &Some(prompt.clone()), &api_key, &model, &web_evidence, image_data.as_deref()
+                    extraction, &Some(prompt.clone()), &provider, &api_key, &model, &web_evidence, image_data.as_deref()
                 ).await {
                     Ok(draft) => {
                         println!("[AI Draft] title={} brand={:?} fabric={:?} design_code={:?} web_count={:?}",
@@ -473,6 +479,33 @@ pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai:
 
 #[tauri::command]
 pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::catalog_composer::CatalogDraft) -> Result<i64, String> {
+    // Download the web image (best_image_url) BEFORE acquiring the DB lock.
+    // This avoids holding Mutex<Connection> across a network .await, which
+    // would block other Tauri commands for up to 8 seconds (image download
+    // timeout). Matches the pattern used in ask_ai where network calls
+    // happen outside the lock scope.
+    //
+    // If best_image_url is None or download fails, fall back to "[]" (no
+    // image attached). The save never fails due to image download issues.
+    let images_json: String = if let Some(ref url) = draft.best_image_url {
+        if !url.is_empty() {
+            match download_and_save_image(url).await {
+                Ok(filename) => {
+                    println!("[save_catalog_draft] Downloaded web image: {}", filename);
+                    serde_json::to_string(&[filename]).unwrap_or_else(|_| "[]".to_string())
+                }
+                Err(e) => {
+                    println!("[save_catalog_draft] Web image download failed: {}. Saving without image.", e);
+                    "[]".to_string()
+                }
+            }
+        } else {
+            "[]".to_string()
+        }
+    } else {
+        "[]".to_string()
+    };
+
     let conn = state.0.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
     let sku = draft.design_code.clone().unwrap_or_default();
@@ -524,7 +557,11 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
         tags: if tags.is_empty() { None } else { Some(tags.join(", ")) },
         stock_quantity: 0,
         status: "active".to_string(),
-        images: "[]".to_string(),
+        // Persist the web image (best_image_url) that was downloaded before
+        // the DB lock was acquired. Previously this was hardcoded as "[]"
+        // which silently discarded the web image the user saw in the draft
+        // card — saving the product with NO image at all.
+        images: images_json,
         supplier_id: None,
         created_at: now.clone(),
         updated_at: now,
@@ -533,16 +570,69 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
     Ok(id)
 }
 
+/// Download an image from a URL and save it locally using the existing
+/// `process_and_save_image_bytes` helper (which normalizes the image to a
+/// thumbnail-sized JPEG with aspect-ratio preservation).
+///
+/// Returns the saved filename (e.g., "1730123456_thumbnail.jpg") on success,
+/// or an error string on failure. The caller is expected to handle failures
+/// gracefully (fall back to no-image).
+///
+/// Used by `save_catalog_draft` to persist the `best_image_url` that the
+/// AI catalog composer extracted from web search results.
+async fn download_and_save_image(url: &str) -> Result<String, String> {
+    use std::time::Duration;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let res = client
+        .get(url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        // Many e-commerce sites hotlink-protect images and 403 any non-self
+        // referer. Sending no referer maximizes the chance of success.
+        .header("Referer", "")
+        .send()
+        .await
+        .map_err(|e| format!("Image download request failed: {}", e))?;
+
+    if !res.status().is_success() {
+        return Err(format!("Image download returned HTTP {}", res.status()));
+    }
+
+    let bytes = res.bytes().await
+        .map_err(|e| format!("Failed to read image bytes: {}", e))?
+        .to_vec();
+
+    if bytes.is_empty() {
+        return Err("Image download returned 0 bytes".to_string());
+    }
+
+    // Reuse the existing image processing helper. It will:
+    // 1. Decode the image (JPEG/PNG/WebP/GIF)
+    // 2. Resize preserving aspect ratio to fit within 200x200
+    // 3. Save as JPEG to the app's images directory
+    // 4. Return the filename
+    let images_dir = crate::utils::get_images_dir();
+    crate::catalog::process_and_save_image_bytes(&bytes, &images_dir, "thumbnail")
+        .map_err(|e| format!("Failed to process/save image: {}", e))
+}
+
 #[tauri::command]
 pub async fn generate_social_post(
     state: State<'_, DbState>,
     product_id: i64,
     platform: Option<String>,
 ) -> Result<crate::ai::marketing_engine::MarketingPost, String> {
-    let (api_key, model) = {
+    // Capture provider along with api_key + model. Previously cfg.0 (provider)
+    // was discarded, causing marketing_engine to silently use hardcoded
+    // "gemini" — OpenAI/Claude/Ollama users could not use Generate Post.
+    let (provider, api_key, model) = {
         let conn = state.0.lock().await;
         let cfg = ai::get_ai_config(&conn)?;
-        (cfg.1.clone(), cfg.2.clone())
+        (cfg.0.clone(), cfg.1.clone(), cfg.2.clone())
     };
     let product = {
         let conn = state.0.lock().await;
@@ -559,7 +649,7 @@ pub async fn generate_social_post(
     let fabric = product.category.as_deref().unwrap_or("");
     let notes = product.description.as_deref().unwrap_or("");
     crate::ai::marketing_engine::generate_marketing_post(
-        product_name, brand, fabric, notes, &api_key, &model,
+        product_name, brand, fabric, notes, &provider, &api_key, &model,
         platform.as_deref(),
     ).await
 }

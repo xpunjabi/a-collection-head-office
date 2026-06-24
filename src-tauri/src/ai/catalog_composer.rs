@@ -17,6 +17,7 @@ pub struct CatalogDraft {
 pub async fn generate_catalog_draft(
     extraction: &LocalExtractionResult,
     user_instruction: &Option<String>,
+    provider: &str,
     api_key: &str,
     model: &str,
     web_evidence: &Option<WebEvidence>,
@@ -68,7 +69,7 @@ Return ONLY valid JSON without any markdown formatting, code blocks, or extra te
         }
     }
 
-    let response = super::call_ai_provider("gemini", api_key, model, &system_prompt, &user_prompt, image_base64).await?;
+    let response = super::call_ai_provider(provider, api_key, model, &system_prompt, &user_prompt, image_base64).await?;
 
     let body = response.trim();
 

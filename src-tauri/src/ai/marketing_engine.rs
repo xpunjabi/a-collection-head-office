@@ -62,6 +62,7 @@ pub async fn generate_marketing_post(
     brand: &str,
     fabric: &str,
     notes: &str,
+    provider: &str,
     api_key: &str,
     model: &str,
     platform: Option<&str>,
@@ -150,7 +151,7 @@ Return ONLY valid JSON without any markdown formatting, code blocks, or extra te
         hashtag_count
     );
 
-    let response = super::call_ai_provider("gemini", api_key, model, system_prompt, &user_prompt, None).await?;
+    let response = super::call_ai_provider(provider, api_key, model, system_prompt, &user_prompt, None).await?;
 
     let body = response.trim();
 

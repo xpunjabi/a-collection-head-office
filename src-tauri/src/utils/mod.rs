@@ -21,3 +21,32 @@ pub fn get_images_dir() -> PathBuf {
     let _ = fs::create_dir_all(&dir);
     dir
 }
+
+/// Format a money amount using the configured currency code.
+///
+/// This centralizes currency formatting so all AI prompts, weekly reports,
+/// and business context strings render money consistently. Previously the
+/// codebase hardcoded `${:.2}` everywhere, which was wrong for a Pakistani
+/// business whose business_profile declares `"currency": "PKR"`.
+///
+/// Conventions:
+/// - "PKR" -> "Rs. 2500.00" (Pakistani Rupee, common rendering; uses "Rs."
+///   prefix to avoid the ₨ font gap on some systems)
+/// - "USD" -> "$ 2500.00"
+/// - "EUR" -> "€ 2500.00"
+/// - other -> "<CODE> 2500.00"
+///
+/// Decimals are kept (2 places) for accounting precision. UI rendering
+/// can strip them where appropriate.
+pub fn format_money(amount: f64, currency: &str) -> String {
+    let prefix = match currency.to_uppercase().as_str() {
+        "PKR" => "Rs.",
+        "USD" => "$",
+        "EUR" => "€",
+        "GBP" => "£",
+        "INR" => "₹",
+        other => other,
+    };
+    format!("{} {:.2}", prefix, amount)
+}
+

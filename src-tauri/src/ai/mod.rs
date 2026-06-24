@@ -113,13 +113,21 @@ pub fn build_business_context(conn: &Connection) -> Result<String, String> {
     let total_sales: f64 = conn.query_row("SELECT COALESCE(SUM(total_amount), 0.0) FROM orders", [], |r| r.get(0)).unwrap_or(0.0);
     let total_profit: f64 = conn.query_row("SELECT COALESCE(SUM(profit), 0.0) FROM orders", [], |r| r.get(0)).unwrap_or(0.0);
 
+    // Read currency from business_profile. Falls back to "PKR" if the profile
+    // is missing or the field is absent. Previously money was hardcoded as
+    // "${:.2}" which was incorrect for a Pakistani business.
+    let currency = {
+        let profile = get_business_profile(conn).unwrap_or_default();
+        profile["currency"].as_str().unwrap_or("PKR").to_string()
+    };
+
     let mut context = String::new();
     context.push_str("## Current Business Snapshot\n\n");
     context.push_str(&format!("- **Active Products:** {}\n", prod_count));
     context.push_str(&format!("- **Total Customers:** {}\n", cust_count));
     context.push_str(&format!("- **Total Orders:** {}\n", order_count));
-    context.push_str(&format!("- **Total Sales:** ${:.2}\n", total_sales));
-    context.push_str(&format!("- **Total Profit:** ${:.2}\n", total_profit));
+    context.push_str(&format!("- **Total Sales:** {}\n", crate::utils::format_money(total_sales, &currency)));
+    context.push_str(&format!("- **Total Profit:** {}\n", crate::utils::format_money(total_profit, &currency)));
     context.push_str(&format!("- **Low Stock Items:** {}\n", low_stock));
     context.push_str(&format!("- **Dead Stock Items:** {}\n", dead_stock));
     Ok(context)
@@ -541,9 +549,16 @@ fn parse_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
                             let qty: i64 = row.get(4).unwrap_or(0);
                             let desc: String = row.get(5).unwrap_or_default();
 
+                            // Read currency from business_profile for proper formatting.
+                            // Previously hardcoded as "${:.2}" which was incorrect.
+                            let currency = {
+                                let profile = get_business_profile(conn).unwrap_or_default();
+                                profile["currency"].as_str().unwrap_or("PKR").to_string()
+                            };
+
                             let text = format!(
-                                "Here are the details for **{}**:\n\n* **SKU**: {}\n* **Category**: {}\n* **Price**: ${:.2}\n* **Current Stock**: {} units\n* **Description**: {}\n",
-                                name, sku, category, price, qty, desc
+                                "Here are the details for **{}**:\n\n* **SKU**: {}\n* **Category**: {}\n* **Price**: {}\n* **Current Stock**: {} units\n* **Description**: {}\n",
+                                name, sku, category, crate::utils::format_money(price, &currency), qty, desc
                             );
                             
                             return Some(AiResponse {
