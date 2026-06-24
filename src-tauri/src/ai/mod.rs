@@ -231,12 +231,13 @@ pub fn build_profit_mode_context(conn: &Connection, currency: &str) -> String {
 
     // === STALE STOCK ALERTS ===
     ctx.push_str("\n## Stale Stock (not shared in 7+ days)\n\n");
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
     let stale_count: i64 = conn.query_row(
         "SELECT COUNT(DISTINCT p.id) FROM products p
          LEFT JOIN share_logs sl ON sl.product_id = p.id
          WHERE p.status='active' AND p.stock_quantity > 0
          AND (sl.shared_at IS NULL OR sl.shared_at < ?1)",
-        [(&chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339()],
+        [&cutoff],
         |r| r.get(0)
     ).unwrap_or(0);
     if stale_count == 0 {
