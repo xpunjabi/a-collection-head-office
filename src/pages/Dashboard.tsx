@@ -1,206 +1,236 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/store'
 import { invoke } from '@tauri-apps/api/core'
-import { 
-  Package, 
-  Layers, 
-  AlertTriangle, 
-  Users, 
-  Plus, 
-  ShoppingCart, 
-  TrendingUp,
-  FileText
+import {
+  Package, Layers, AlertTriangle, Users, Wallet, TrendingUp,
+  ArrowUpFromLine, ShoppingCart, RefreshCw, Sparkles, MapPin
 } from 'lucide-react'
-import { 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer, 
-  AreaChart,
-  Area
-} from 'recharts'
+import { AgentSummary, Product } from '../stores/store'
 
-interface DashboardStats {
-  totalProducts: number;
-  totalStock: number;
-  lowStockCount: number;
-  totalCustomers: number;
+interface ShareLog {
+  id: number
+  product_id: number | null
+  platform: string
+  share_angle: string
+  caption_text: string
+  shared_by: string
+  shared_at: string
+  notes: string
+  product_name: string
 }
 
 export default function Dashboard() {
-  const { products, customers, setCurrentTab, fetchProducts, fetchCustomers } = useAppStore()
-  const [stats, setStats] = useState<DashboardStats>({
-    totalProducts: 0,
-    totalStock: 0,
-    lowStockCount: 0,
-    totalCustomers: 0
-  })
-
-  // Load chart data
-  const [chartData, setChartData] = useState([
-    { name: 'Jan', Sales: 4000, Profit: 2400 },
-    { name: 'Feb', Sales: 3000, Profit: 1398 },
-    { name: 'Mar', Sales: 2000, Profit: 9800 },
-    { name: 'Apr', Sales: 2780, Profit: 3908 },
-    { name: 'May', Sales: 1890, Profit: 4800 },
-    { name: 'Jun', Sales: 2390, Profit: 3800 },
-  ])
+  const { products, setCurrentTab, fetchProducts } = useAppStore()
+  const [agents, setAgents] = useState<AgentSummary[]>([])
+  const [shareLogs, setShareLogs] = useState<ShareLog[]>([])
+  const [staleProducts, setStaleProducts] = useState<Product[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     fetchProducts()
-    fetchCustomers()
+    loadProfitModeData()
   }, [])
 
-  useEffect(() => {
-    // Calculate stats
-    const totalProducts = products.length
-    const totalStock = products.reduce((acc, p) => acc + p.stock_quantity, 0)
-    const lowStockCount = products.filter(p => p.stock_quantity <= 5).length
-    const totalCustomers = customers.length
+  const loadProfitModeData = async () => {
+    setLoading(true)
+    try {
+      const [agentData, logData, staleData] = await Promise.all([
+        invoke<AgentSummary[]>('get_agents').catch(() => []),
+        invoke<ShareLog[]>('get_share_logs', { limit: 10 }).catch(() => []),
+        invoke<Product[]>('get_stale_products', { days: 7 }).catch(() => []),
+      ])
+      setAgents(agentData)
+      setShareLogs(logData)
+      setStaleProducts(staleData)
+    } catch (err) {
+      console.error('Failed to load profit-mode dashboard data:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
-    setStats({
-      totalProducts,
-      totalStock,
-      lowStockCount,
-      totalCustomers
-    })
+  // Compute profit-mode stats from products + agents
+  const totalHOStock = products.reduce((s, p) => s + (p.qty_in_head_office ?? p.stock_quantity), 0)
+  const totalAgentStock = products.reduce((s, p) => s + (p.qty_with_agents ?? 0), 0)
+  const totalSold = products.reduce((s, p) => s + (p.qty_sold ?? 0), 0)
+  const totalOutstanding = agents.reduce((s, a) => s + a.outstanding_balance, 0)
 
-    // Fetch actual sales stats from db for chart if possible
-    invoke('get_sales_report', { start_date: '2026-01-01', end_date: '2026-12-31' })
-      .then((res: any) => {
-        if (res && res.total_sales > 0) {
-          // If we have sales, mock a monthly distribution based on it
-          const salesVal = res.total_sales;
-          const profitVal = res.total_profit;
-          setChartData([
-            { name: 'Jan', Sales: salesVal * 0.1, Profit: profitVal * 0.1 },
-            { name: 'Feb', Sales: salesVal * 0.15, Profit: profitVal * 0.15 },
-            { name: 'Mar', Sales: salesVal * 0.12, Profit: profitVal * 0.12 },
-            { name: 'Apr', Sales: salesVal * 0.2, Profit: profitVal * 0.2 },
-            { name: 'May', Sales: salesVal * 0.18, Profit: profitVal * 0.18 },
-            { name: 'Jun', Sales: salesVal * 0.25, Profit: profitVal * 0.25 },
-          ])
-        }
-      })
-      .catch(console.error)
-  }, [products, customers])
+  const fmtMoney = (n: number) => `Rs. ${n.toFixed(0)}`
+  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+  const topAgentsByOutstanding = [...agents].sort((a, b) => b.outstanding_balance - a.outstanding_balance).slice(0, 5)
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-white font-display">Dashboard</h1>
-        <p className="text-sm text-gray-400 mt-1">Overview of your clothing business operations.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-white font-display">Dashboard</h1>
+          <p className="text-sm text-gray-400 mt-1">Profit-mode overview — stock, agents, balances, and shares at a glance.</p>
+        </div>
+        <button onClick={loadProfitModeData} disabled={loading}
+          className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg text-xs disabled:opacity-50">
+          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          <span>Refresh</span>
+        </button>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="glass-card p-5 flex items-center space-x-4">
-          <div className="p-3 bg-violet-600/20 text-violet-400 rounded-lg">
-            <Package size={24} />
-          </div>
-          <div>
-            <p className="text-xs text-gray-400 uppercase font-medium">Total Products</p>
-            <p className="text-2xl font-bold text-white">{stats.totalProducts}</p>
-          </div>
+      {/* === TOP STATS CARDS (6 cards) === */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <button onClick={() => setCurrentTab('catalog')}
+          className="glass-card p-4 text-left hover:border-violet-500/50 transition-colors">
+          <Package size={16} className="text-violet-400 mb-1" />
+          <div className="text-[10px] text-gray-500 uppercase">Active Products</div>
+          <div className="text-xl font-bold text-white">{products.filter(p => p.status === 'active').length}</div>
+        </button>
+
+        <div className="glass-card p-4">
+          <Layers size={16} className="text-emerald-400 mb-1" />
+          <div className="text-[10px] text-gray-500 uppercase">Stock in HO</div>
+          <div className="text-xl font-bold text-white">{totalHOStock} <span className="text-xs text-gray-500">units</span></div>
         </div>
 
-        <div className="glass-card p-5 flex items-center space-x-4">
-          <div className="p-3 bg-emerald-600/20 text-emerald-400 rounded-lg">
-            <Layers size={24} />
-          </div>
-          <div>
-            <p className="text-xs text-gray-400 uppercase font-medium">Active Stock</p>
-            <p className="text-2xl font-bold text-white">{stats.totalStock} units</p>
-          </div>
+        <div className="glass-card p-4">
+          <ArrowUpFromLine size={16} className="text-blue-400 mb-1" />
+          <div className="text-[10px] text-gray-500 uppercase">With Agents</div>
+          <div className="text-xl font-bold text-white">{totalAgentStock} <span className="text-xs text-gray-500">units</span></div>
         </div>
 
-        <div className="glass-card p-5 flex items-center space-x-4 border-red-500/20">
-          <div className="p-3 bg-red-600/20 text-red-400 rounded-lg">
-            <AlertTriangle size={24} />
-          </div>
-          <div>
-            <p className="text-xs text-gray-400 uppercase font-medium">Low Stock Items</p>
-            <p className="text-2xl font-bold text-white">{stats.lowStockCount}</p>
-          </div>
+        <div className="glass-card p-4">
+          <ShoppingCart size={16} className="text-emerald-400 mb-1" />
+          <div className="text-[10px] text-gray-500 uppercase">Sold (all-time)</div>
+          <div className="text-xl font-bold text-white">{totalSold} <span className="text-xs text-gray-500">units</span></div>
         </div>
 
-        <div className="glass-card p-5 flex items-center space-x-4">
-          <div className="p-3 bg-cyan-600/20 text-cyan-400 rounded-lg">
-            <Users size={24} />
-          </div>
-          <div>
-            <p className="text-xs text-gray-400 uppercase font-medium">Active Customers</p>
-            <p className="text-2xl font-bold text-white">{stats.totalCustomers}</p>
-          </div>
+        <div className="glass-card p-4 border-amber-500/20">
+          <Wallet size={16} className="text-amber-400 mb-1" />
+          <div className="text-[10px] text-gray-500 uppercase">Outstanding</div>
+          <div className="text-xl font-bold text-amber-400">{fmtMoney(totalOutstanding)}</div>
+        </div>
+
+        <div className="glass-card p-4 border-red-500/20">
+          <AlertTriangle size={16} className="text-red-400 mb-1" />
+          <div className="text-[10px] text-gray-500 uppercase">Stale Stock</div>
+          <div className="text-xl font-bold text-red-400">{staleProducts.length}</div>
         </div>
       </div>
 
-      {/* Chart Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="glass-card p-5 lg:col-span-2">
-          <h2 className="text-lg font-semibold text-white mb-4 flex items-center">
-            <TrendingUp className="mr-2 text-violet-500" size={20} /> Sales & Profit Trend
-          </h2>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.05)" />
-                <XAxis dataKey="name" stroke="#9ca3af" fontSize={11} />
-                <YAxis stroke="#9ca3af" fontSize={11} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#111827', borderColor: 'rgba(255,255,255,0.08)', color: '#fff' }}
-                />
-                <Area type="monotone" dataKey="Sales" stroke="#8b5cf6" fillOpacity={1} fill="url(#colorSales)" />
-                <Area type="monotone" dataKey="Profit" stroke="#10b981" fillOpacity={1} fill="url(#colorProfit)" />
-              </AreaChart>
-            </ResponsiveContainer>
+      {/* === TWO-COLUMN LAYOUT === */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* LEFT: Agents with outstanding */}
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-white flex items-center">
+              <Wallet size={14} className="mr-2 text-amber-400" />
+              Agents with Outstanding Balance
+            </h2>
+            <button onClick={() => setCurrentTab('agents')}
+              className="text-[10px] text-violet-400 hover:text-violet-300">View All →</button>
           </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="glass-card p-5 flex flex-col justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Quick Actions</h2>
+          {topAgentsByOutstanding.length === 0 ? (
+            <p className="text-xs text-gray-500 py-6 text-center">No agents yet. Add agents to track stock distribution.</p>
+          ) : (
             <div className="space-y-2">
-              <button 
-                onClick={() => setCurrentTab('catalog')}
-                className="w-full flex items-center justify-between p-3 bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors glow-btn text-sm font-medium"
-              >
-                <span>Add New Product</span>
-                <Plus size={18} />
-              </button>
-              <button 
-                onClick={() => setCurrentTab('customers')}
-                className="w-full flex items-center justify-between p-3 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg border border-gray-700 transition-colors text-sm font-medium"
-              >
-                <span>New Sales Order</span>
-                <ShoppingCart size={18} />
-              </button>
-              <button 
-                onClick={() => setCurrentTab('reports')}
-                className="w-full flex items-center justify-between p-3 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg border border-gray-700 transition-colors text-sm font-medium"
-              >
-                <span>Generate Business Report</span>
-                <FileText size={18} />
-              </button>
+              {topAgentsByOutstanding.map(a => (
+                <div key={a.agent.id} className="flex items-center justify-between p-2 bg-slate-950/50 rounded-lg">
+                  <div className="flex items-center space-x-2">
+                    <MapPin size={12} className="text-gray-500" />
+                    <div>
+                      <div className="text-xs font-semibold text-white">{a.agent.name}</div>
+                      <div className="text-[10px] text-gray-500">{a.agent.city || '—'} • {a.current_stock_units} units held</div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className={`text-xs font-bold ${a.outstanding_balance > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                      {fmtMoney(a.outstanding_balance)}
+                    </div>
+                    <div className="text-[10px] text-gray-500">received: {fmtMoney(a.total_cash_received)}</div>
+                  </div>
+                </div>
+              ))}
             </div>
+          )}
+        </div>
+
+        {/* RIGHT: Recent share activity */}
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-white flex items-center">
+              <Sparkles size={14} className="mr-2 text-violet-400" />
+              Recent Shares (last 10)
+            </h2>
+            <button onClick={() => setCurrentTab('share_center')}
+              className="text-[10px] text-violet-400 hover:text-violet-300">Share Center →</button>
           </div>
-          
-          <div className="mt-6 p-4 bg-violet-950/20 border border-violet-500/10 rounded-lg text-xs text-violet-300">
-            <strong>AI Suggestion:</strong> Your inventory shows {stats.lowStockCount} items at low stock levels. Try generating purchase orders or running promotions on dead stock.
+          {shareLogs.length === 0 ? (
+            <p className="text-xs text-gray-500 py-6 text-center">No shares logged yet. Visit Share Center to push products.</p>
+          ) : (
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {shareLogs.map(log => (
+                <div key={log.id} className="flex items-start justify-between p-2 bg-slate-950/50 rounded-lg">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-white truncate">{log.product_name}</div>
+                    <div className="text-[10px] text-gray-500">
+                      {log.platform.replace(/_/g, ' ')} • {log.share_angle.replace(/_/g, ' ') || '—'}
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-gray-500 ml-2 shrink-0">{fmtDate(log.shared_at)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* === STALE STOCK ALERT === */}
+      {staleProducts.length > 0 && (
+        <div className="glass-card p-5 border-amber-500/30">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-white flex items-center">
+              <AlertTriangle size={14} className="mr-2 text-amber-400" />
+              Stale Stock — Not shared in 7+ days ({staleProducts.length})
+            </h2>
+            <button onClick={() => setCurrentTab('share_center')}
+              className="text-[10px] px-2 py-1 bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 rounded font-medium">
+              Share Now →
+            </button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+            {staleProducts.slice(0, 10).map(p => (
+              <div key={p.id} className="bg-slate-950/50 rounded-lg p-2">
+                <div className="text-xs font-semibold text-white truncate">{p.name}</div>
+                <div className="text-[10px] text-gray-500">Rs. {p.sale_price.toFixed(0)} • {p.stock_quantity} in stock</div>
+              </div>
+            ))}
           </div>
         </div>
+      )}
+
+      {/* === QUICK ACTIONS === */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <button onClick={() => setCurrentTab('catalog')}
+          className="glass-card p-4 hover:border-violet-500/50 transition-colors text-center">
+          <Package size={20} className="mx-auto text-violet-400 mb-1" />
+          <div className="text-xs font-semibold text-white">Catalog</div>
+          <div className="text-[10px] text-gray-500">{products.length} products</div>
+        </button>
+        <button onClick={() => setCurrentTab('agents')}
+          className="glass-card p-4 hover:border-violet-500/50 transition-colors text-center">
+          <Users size={20} className="mx-auto text-blue-400 mb-1" />
+          <div className="text-xs font-semibold text-white">Agents</div>
+          <div className="text-[10px] text-gray-500">{agents.length} agents</div>
+        </button>
+        <button onClick={() => setCurrentTab('purchase_trips')}
+          className="glass-card p-4 hover:border-violet-500/50 transition-colors text-center">
+          <TrendingUp size={20} className="mx-auto text-emerald-400 mb-1" />
+          <div className="text-xs font-semibold text-white">Purchase Trips</div>
+          <div className="text-[10px] text-gray-500">Record buying trips</div>
+        </button>
+        <button onClick={() => setCurrentTab('share_center')}
+          className="glass-card p-4 hover:border-violet-500/50 transition-colors text-center">
+          <Sparkles size={20} className="mx-auto text-pink-400 mb-1" />
+          <div className="text-xs font-semibold text-white">Share Center</div>
+          <div className="text-[10px] text-gray-500">Push to social</div>
+        </button>
       </div>
     </div>
   )
