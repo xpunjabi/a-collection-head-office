@@ -308,14 +308,16 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
 
     seed_initial_data(conn)?;
     ensure_business_profile(conn)?;
-    seed_locations(conn)?;
-    // Issue #6 fix: sync business_profile.sales_areas into locations table
-    // on every startup. Idempotent — only inserts missing rows.
-    sync_sales_areas_to_locations(conn)?;
-    // v0.11.0: migrate any existing locations into the new agents table
-    // (idempotent — only inserts agents for locations that don't have a
-    // matching agent yet).
-    sync_locations_to_agents(conn)?;
+    // v0.12.7: locations table aur uske saare sync functions REMOVED.
+    // Locations table DB mein exist karti hai (taake purana code break na
+    // ho), lekin hum usme koi naya data insert nahi karte. Agents table
+    // ab single source of truth hai.
+    // seed_locations(conn)?;           // REMOVED — naye locations nahi banenge
+    // sync_sales_areas_to_locations(conn)?;  // REMOVED
+    // sync_locations_to_agents(conn)?;       // REMOVED
+    // Sirf ek baar cleanup chalao taake purane duplicates (agar koi bache
+    // hain) remove ho jayein.
+    cleanup_duplicate_agents(conn)?;
 
     // ============================================================
     // v0.11.1 — Share Center enhancements
