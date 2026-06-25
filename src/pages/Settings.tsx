@@ -166,6 +166,18 @@ export default function Settings() {
                 <HardDrive size={16} />
               </button>
             </div>
+            {/* Google Drive backup tip */}
+            <div className="mt-2 bg-emerald-950/30 border border-emerald-800/40 rounded-lg p-3">
+              <p className="text-xs text-emerald-300 font-semibold flex items-center">
+                ☁️ Google Drive Auto-Backup Tip
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                Install <strong>Google Drive desktop app</strong> on your PC. It creates a folder like <code className="text-emerald-400">C:\Users\YourName\Google Drive</code>. Select that folder as your backup location above — your database will automatically sync to the cloud whenever a backup runs.
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                No extra app configuration needed — Drive syncs the file in the background.
+              </p>
+            </div>
           </div>
 
           <div>

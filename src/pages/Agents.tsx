@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore, AgentSummary, AgentLedgerEntry } from '../stores/store'
 import {
-  Plus, X, User, Package,
+  Plus, X, User, Package, Trash2,
   ArrowDownToLine, ArrowUpFromLine, Banknote, Scale, History
 } from 'lucide-react'
 
@@ -116,6 +116,22 @@ export default function AgentsPage() {
       })
       await loadAgents()
     } catch (err) { alert(err) }
+  }
+
+  const handleDeleteAgent = async (a: AgentSummary) => {
+    if (!a.agent.id) return
+    const hasStock = a.current_stock_units > 0
+    const hasBalance = a.outstanding_balance > 0
+    let warning = `Delete agent "${a.agent.name}"?`
+    if (hasStock) warning += `\n\n⚠️ This agent has ${a.current_stock_units} units in stock. Deleting will also delete all ledger entries.`
+    if (hasBalance) warning += `\n\n⚠️ This agent has Rs. ${a.outstanding_balance.toFixed(0)} outstanding balance. Deleting will lose this record.`
+    warning += '\n\nThis CANNOT be undone.'
+    if (!confirm(warning)) return
+    try {
+      await invoke('delete_agent', { id: a.agent.id })
+      setSelectedAgent(null)
+      await loadAgents()
+    } catch (err) { alert(`Error: ${err}`) }
   }
 
   const openAction = (kind: 'send' | 'return' | 'sell' | 'cash' | 'adjust') => {
@@ -257,10 +273,13 @@ export default function AgentsPage() {
                     <p className="text-xs text-gray-400 mt-2 italic">{selectedAgent.agent.notes}</p>
                   )}
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-3">
                   <button onClick={() => handleOpenEdit(selectedAgent)} className="text-xs text-gray-400 hover:text-violet-400">Edit</button>
                   <button onClick={() => handleToggleActive(selectedAgent)} className="text-xs text-gray-500 hover:text-gray-300">
                     {selectedAgent.agent.is_active ? 'Deactivate' : 'Activate'}
+                  </button>
+                  <button onClick={() => handleDeleteAgent(selectedAgent)} className="flex items-center space-x-1 text-xs text-red-400 hover:text-red-300">
+                    <Trash2 size={12} /><span>Delete</span>
                   </button>
                 </div>
               </div>
