@@ -1341,3 +1341,175 @@ pub async fn recalculate_trip(state: State<'_, DbState>, trip_id: i64) -> Result
     let conn = state.0.lock().await;
     purchase_trips::recalculate_trip_allocations(&conn, trip_id).map_err(|e| e.to_string())
 }
+
+// ============================================================
+// v0.12.5 — Sales Recording (Head Office records ALL sales)
+// ============================================================
+
+/// Record a sale. Works for both direct HO sales AND agent walk-in sales.
+/// If agent_id is provided, it's an agent sale (reduces agent stock).
+/// If agent_id is None, it's a direct HO sale (reduces HO stock).
+///
+/// Auto-updates:
+/// - sales table entry created
+/// - product stock reduced (HO or agent depending on sale type)
+/// - product.qty_sold increased
+/// - product.profit_status auto-recalculated
+#[tauri::command]
+pub async fn record_sale(
+    state: State<'_, DbState>,
+    product_id: i64,
+    qty: i64,
+    unit_sale_price: f64,
+    sale_channel: String,
+    agent_id: Option<i64>,
+    customer_name: Option<String>,
+    customer_phone: Option<String>,
+    notes: Option<String>,
+) -> Result<i64, String> {
+    if qty <= 0 {
+        return Err("Quantity must be positive.".to_string());
+    }
+    let conn = state.0.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    let total = qty as f64 * unit_sale_price;
+
+    // If agent_id is provided, record as agent sale (reduces agent stock)
+    if let Some(aid) = agent_id {
+        // Validate agent has enough stock of this product
+        let agent_qty: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(CASE WHEN entry_type = 'stock_sent' THEN qty ELSE 0 END) -
+                              SUM(CASE WHEN entry_type = 'stock_returned' THEN qty ELSE 0 END) -
+                              SUM(CASE WHEN entry_type = 'sale_reported' THEN qty ELSE 0 END), 0)
+             FROM agent_ledger_entries WHERE agent_id = ?1 AND product_id = ?2",
+            rusqlite::params![aid, product_id],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        if agent_qty < qty {
+            return Err(format!(
+                "Agent does not have enough stock. Agent has: {}, requested: {}.",
+                agent_qty, qty
+            ));
+        }
+        // Create agent ledger entry for the sale
+        let amount = qty as f64 * unit_sale_price;
+        conn.execute(
+            "INSERT INTO agent_ledger_entries (agent_id, product_id, entry_type, qty, unit_price, amount, reference_code, notes, entry_date, created_at, updated_at)
+             VALUES (?1, ?2, 'sale_reported', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            rusqlite::params![
+                aid, product_id, qty, unit_sale_price, amount,
+                format!("SALE-{}", now),
+                notes.as_deref().unwrap_or(""),
+                &now, &now, &now,
+            ],
+        ).map_err(|e| e.to_string())?;
+        // Reduce agent stock, increase sold
+        conn.execute(
+            "UPDATE products SET qty_with_agents = MAX(0, qty_with_agents - ?1), qty_sold = qty_sold + ?2, updated_at = ?3 WHERE id = ?4",
+            rusqlite::params![qty, qty, &now, product_id],
+        ).map_err(|e| e.to_string())?;
+    } else {
+        // Direct HO sale — validate HO has enough stock
+        let ho_qty: i64 = conn.query_row(
+            "SELECT COALESCE(qty_in_head_office, stock_quantity, 0) FROM products WHERE id = ?1",
+            rusqlite::params![product_id],
+            |r| r.get(0),
+        ).map_err(|e| format!("Product not found: {}", e))?;
+        if ho_qty < qty {
+            return Err(format!(
+                "Insufficient stock in Head Office. Available: {}, requested: {}.",
+                ho_qty, qty
+            ));
+        }
+        // Reduce HO stock, increase sold
+        conn.execute(
+            "UPDATE products SET qty_in_head_office = qty_in_head_office - ?1, stock_quantity = stock_quantity - ?2, qty_sold = qty_sold + ?3, updated_at = ?4 WHERE id = ?5",
+            rusqlite::params![qty, qty, qty, &now, product_id],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    // Create sales table entry
+    conn.execute(
+        "INSERT INTO sales (product_id, sale_channel, sale_type, agent_id, qty, unit_sale_price, total_sale_amount, customer_name, customer_phone, notes, sale_date, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        rusqlite::params![
+            product_id,
+            &sale_channel,
+            if agent_id.is_some() { "agent_sale" } else { "direct_sale" },
+            agent_id,
+            qty,
+            unit_sale_price,
+            total,
+            customer_name.as_deref().unwrap_or(""),
+            customer_phone.as_deref().unwrap_or(""),
+            notes.as_deref().unwrap_or(""),
+            &now,
+            &now,
+            &now,
+        ],
+    ).map_err(|e| e.to_string())?;
+    let sale_id = conn.last_insert_rowid();
+
+    // Auto-update profit_status based on remaining stock
+    let (ho_qty, agent_qty): (i64, i64) = conn.query_row(
+        "SELECT COALESCE(qty_in_head_office, 0), COALESCE(qty_with_agents, 0) FROM products WHERE id = ?1",
+        rusqlite::params![product_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap_or((0, 0));
+    let new_status = if ho_qty == 0 && agent_qty == 0 {
+        "sold_out"
+    } else if ho_qty == 0 && agent_qty > 0 {
+        "with_agent"
+    } else {
+        "in_head_office"
+    };
+    conn.execute(
+        "UPDATE products SET profit_status = ?1, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![new_status, &now, product_id],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(sale_id)
+}
+
+/// Get recent sales with product names. Optionally filter by channel or agent.
+#[tauri::command]
+pub async fn get_sales(
+    state: State<'_, DbState>,
+    limit: Option<i64>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let conn = state.0.lock().await;
+    let limit = limit.unwrap_or(50);
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.product_id, s.sale_channel, s.sale_type, s.agent_id,
+                s.qty, s.unit_sale_price, s.total_sale_amount,
+                s.customer_name, s.customer_phone, s.notes, s.sale_date,
+                COALESCE(p.name, '(deleted)') AS product_name,
+                COALESCE(a.name, '') AS agent_name
+         FROM sales s
+         LEFT JOIN products p ON s.product_id = p.id
+         LEFT JOIN agents a ON s.agent_id = a.id
+         ORDER BY s.sale_date DESC, s.id DESC
+         LIMIT ?1"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![limit], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>(0)?,
+            "product_id": row.get::<_, i64>(1)?,
+            "sale_channel": row.get::<_, String>(2)?,
+            "sale_type": row.get::<_, String>(3)?,
+            "agent_id": row.get::<_, Option<i64>>(4)?,
+            "qty": row.get::<_, i64>(5)?,
+            "unit_sale_price": row.get::<_, f64>(6)?,
+            "total_sale_amount": row.get::<_, f64>(7)?,
+            "customer_name": row.get::<_, String>(8)?,
+            "customer_phone": row.get::<_, String>(9)?,
+            "notes": row.get::<_, String>(10)?,
+            "sale_date": row.get::<_, String>(11)?,
+            "product_name": row.get::<_, String>(12)?,
+            "agent_name": row.get::<_, String>(13)?,
+        }))
+    }).map_err(|e| e.to_string())?;
+    let mut result = Vec::new();
+    for r in rows { result.push(r.map_err(|e| e.to_string())?); }
+    Ok(result)
+}

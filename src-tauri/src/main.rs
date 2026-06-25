@@ -101,6 +101,9 @@ fn main() {
             commands::add_trip_item,
             commands::remove_trip_item,
             commands::recalculate_trip,
+            // v0.12.5 — Sales
+            commands::record_sale,
+            commands::get_sales,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

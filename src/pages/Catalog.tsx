@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   Search, Download, Upload, Plus, Edit, Trash2, Image as ImageIcon,
   X, Palette, MapPin, Share2, ChevronDown, CheckSquare, Square,
-  MessageCircle, Facebook, Instagram, Twitter
+  MessageCircle, Facebook, Instagram, Twitter, ShoppingCart
 } from 'lucide-react'
 import ProductImage from '../components/ProductImage'
 import {
@@ -58,7 +58,64 @@ export default function Catalog() {
   const shareMenuRef = useRef<HTMLDivElement>(null)
   const bulkShareRef = useRef<HTMLDivElement>(null)
 
+  // v0.12.5: Sale modal state
+  const [showSaleModal, setShowSaleModal] = useState(false)
+  const [saleProduct, setSaleProduct] = useState<Product | null>(null)
+  const [saleMode, setSaleMode] = useState<'direct' | 'agent'>('direct')
+  const [saleQty, setSaleQty] = useState(1)
+  const [saleUnitPrice, setSaleUnitPrice] = useState(0)
+  const [saleChannel, setSaleChannel] = useState('head_office')
+  const [saleAgentId, setSaleAgentId] = useState<number | ''>('')
+  const [saleCustomerName, setSaleCustomerName] = useState('')
+  const [saleCustomerPhone, setSaleCustomerPhone] = useState('')
+  const [saleNotes, setSaleNotes] = useState('')
+  const [saleSaving, setSaleSaving] = useState(false)
+  const [agents, setAgents] = useState<{agent: {id: number; name: string; city?: string}}[]>([])
+
   useEffect(() => { fetchProducts() }, [])
+
+  // Load agents for the sale modal dropdown
+  useEffect(() => {
+    invoke('get_agents').then((data: any) => setAgents(data || [])).catch(() => {})
+  }, [])
+
+  const handleOpenSaleModal = (p: Product) => {
+    setSaleProduct(p)
+    setSaleMode('direct')
+    setSaleQty(1)
+    setSaleUnitPrice(p.sale_price)
+    setSaleChannel('head_office')
+    setSaleAgentId('')
+    setSaleCustomerName('')
+    setSaleCustomerPhone('')
+    setSaleNotes('')
+    setShowSaleModal(true)
+  }
+
+  const handleRecordSale = async () => {
+    if (!saleProduct?.id) return
+    if (saleQty <= 0) { alert('Quantity must be positive.'); return }
+    setSaleSaving(true)
+    try {
+      await invoke('record_sale', {
+        productId: saleProduct.id,
+        qty: saleQty,
+        unitSalePrice: saleUnitPrice,
+        saleChannel: saleMode === 'agent' ? 'agent' : saleChannel,
+        agentId: saleMode === 'agent' && saleAgentId !== '' ? Number(saleAgentId) : null,
+        customerName: saleCustomerName || null,
+        customerPhone: saleCustomerPhone || null,
+        notes: saleNotes || null,
+      })
+      setShowSaleModal(false)
+      await fetchProducts()
+      alert(`Sale recorded! ${saleQty} x ${saleProduct.name} = Rs. ${(saleQty * saleUnitPrice).toFixed(0)}`)
+    } catch (err) {
+      alert(`Error: ${err}`)
+    } finally {
+      setSaleSaving(false)
+    }
+  }
 
   // Close share menus when clicking outside
   useEffect(() => {
@@ -432,6 +489,12 @@ export default function Catalog() {
                       </div>
                       <div>
                         <span className="text-white text-sm">{p.name}</span>
+                        {p.profit_status === 'sold_out' && (
+                          <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-red-600/30 text-red-300 font-bold align-middle">SOLD</span>
+                        )}
+                        {p.profit_status === 'with_agent' && (
+                          <span className="ml-1 text-[9px] px-1 py-0.5 rounded bg-blue-600/30 text-blue-300 font-bold align-middle">AT AGENT</span>
+                        )}
                         {p.design && <span className="text-[10px] text-gray-500 block">{p.design}</span>}
                       </div>
                     </div>
@@ -488,6 +551,18 @@ export default function Catalog() {
                           </div>
                         )}
                       </div>
+                      {/* Record Sale button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleOpenSaleModal(p)
+                        }}
+                        disabled={p.profit_status === 'sold_out'}
+                        className="p-1 hover:text-amber-400 transition-colors disabled:opacity-30"
+                        title="Record Sale"
+                      >
+                        <ShoppingCart size={14} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -622,6 +697,130 @@ export default function Catalog() {
                   className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium">Save</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Sale Modal (v0.12.5) */}
+      {showSaleModal && saleProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-gray-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-slate-950/40">
+              <h3 className="text-lg font-bold text-white font-display">Record Sale</h3>
+              <button onClick={() => setShowSaleModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {/* Product info */}
+              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3">
+                <div className="text-sm font-semibold text-white">{saleProduct.name}</div>
+                <div className="text-[10px] text-gray-500">SKU: {saleProduct.sku} • HO: {saleProduct.qty_in_head_office ?? saleProduct.stock_quantity} • Agents: {saleProduct.qty_with_agents ?? 0}</div>
+              </div>
+
+              {/* Mode tabs */}
+              <div className="flex space-x-1 bg-slate-950 p-1 rounded-lg border border-gray-800">
+                <button
+                  onClick={() => setSaleMode('direct')}
+                  className={`flex-1 px-3 py-1.5 rounded text-xs font-medium ${saleMode === 'direct' ? 'bg-violet-600 text-white' : 'text-gray-400'}`}
+                >
+                  Direct Sale (HO)
+                </button>
+                <button
+                  onClick={() => setSaleMode('agent')}
+                  className={`flex-1 px-3 py-1.5 rounded text-xs font-medium ${saleMode === 'agent' ? 'bg-violet-600 text-white' : 'text-gray-400'}`}
+                >
+                  Agent Sale
+                </button>
+              </div>
+
+              {/* Agent selector (only for agent mode) */}
+              {saleMode === 'agent' && (
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Agent *</label>
+                  <select
+                    value={saleAgentId}
+                    onChange={e => setSaleAgentId(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                  >
+                    <option value="">-- Select Agent --</option>
+                    {agents.map(a => (
+                      <option key={a.agent.id} value={a.agent.id}>{a.agent.name} ({a.agent.city || '—'})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Channel (only for direct mode) */}
+              {saleMode === 'direct' && (
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Sale Channel</label>
+                  <select
+                    value={saleChannel}
+                    onChange={e => setSaleChannel(e.target.value)}
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                  >
+                    <option value="head_office">Head Office (Walk-in)</option>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="facebook">Facebook</option>
+                    <option value="instagram">Instagram</option>
+                    <option value="tiktok">TikTok</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Qty + Price */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Quantity *</label>
+                  <input type="number" min={1} value={saleQty} onChange={e => setSaleQty(Math.max(1, Number(e.target.value)))}
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Unit Price (Rs.)</label>
+                  <input type="number" min={0} step={0.01} value={saleUnitPrice} onChange={e => setSaleUnitPrice(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
+                </div>
+              </div>
+
+              {/* Total */}
+              <div className="bg-violet-900/20 border border-violet-500/30 rounded-lg p-2 text-xs flex justify-between">
+                <span className="text-violet-300">Total Sale Amount:</span>
+                <span className="text-violet-300 font-bold">Rs. {(saleQty * saleUnitPrice).toFixed(0)}</span>
+              </div>
+
+              {/* Customer (optional) */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Customer Name</label>
+                  <input type="text" value={saleCustomerName} onChange={e => setSaleCustomerName(e.target.value)}
+                    placeholder="Optional"
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Customer Phone</label>
+                  <input type="text" value={saleCustomerPhone} onChange={e => setSaleCustomerPhone(e.target.value)}
+                    placeholder="Optional"
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Notes</label>
+                <input type="text" value={saleNotes} onChange={e => setSaleNotes(e.target.value)}
+                  placeholder="Optional"
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
+              </div>
+
+              {/* Buttons */}
+              <div className="flex justify-end space-x-2 pt-3 border-t border-gray-800">
+                <button type="button" onClick={() => setShowSaleModal(false)} disabled={saleSaving}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg text-sm disabled:opacity-50">Cancel</button>
+                <button type="button" onClick={handleRecordSale} disabled={saleSaving || (saleMode === 'agent' && saleAgentId === '')}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                  {saleSaving ? 'Recording...' : 'Record Sale'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
