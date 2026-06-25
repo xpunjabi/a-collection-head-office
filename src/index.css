@@ -46,6 +46,23 @@ body {
   background-color: #030712;
   color: #f3f4f6;
   overflow: hidden;
+  /* v0.12.6: Increase base font size for better readability,
+     especially for users with weaker eyesight (49+ age). */
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* v0.12.6: Override Tailwind's tiny text classes to have a minimum size.
+   text-[10px] and text-[11px] are used in many places for badges/labels.
+   We bump them up to 12px minimum so they're legible. */
+.text-\[10px\] {
+  font-size: 12px !important;
+}
+.text-\[11px\] {
+  font-size: 12.5px !important;
+}
+.text-\[9px\] {
+  font-size: 11px !important;
 }
 
 /* Glassmorphism effects */

@@ -36,7 +36,7 @@ export default function FormattedMessage({ text }: Props) {
   }
 
   return (
-    <span className="whitespace-pre-wrap text-xs leading-relaxed select-text">
+    <span className="whitespace-pre-wrap text-sm leading-relaxed select-text">
       {parts.map((part, i) => {
         if (part.type === 'text') {
           return <span key={i}>{part.content}</span>

@@ -326,6 +326,9 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
     // segments beyond the defaults.
     add_col_if_missing(conn, "customers", "segment", "TEXT DEFAULT 'general'")?;
     add_col_if_missing(conn, "customers", "is_active", "INTEGER NOT NULL DEFAULT 1")?;
+    // v0.12.6: Clean up duplicate agents (same name, different agent_code)
+    // that were created before the name-check fix in sync_locations_to_agents.
+    cleanup_duplicate_agents(conn)?;
     Ok(())
 }
 
@@ -496,6 +499,21 @@ fn sync_locations_to_agents(conn: &Connection) -> Result<()> {
     };
     for row in rows {
         if let Ok((loc_id, name, address, is_active)) = row {
+            // v0.12.6 fix: Check if an agent with the same name already
+            // exists BEFORE inserting. Previously, INSERT OR IGNORE only
+            // checked agent_code uniqueness — so if the user manually added
+            // an agent named "Narowal" (agent_code "AGT-XXX"), and a
+            // location named "Narowal" also existed (agent_code "LOC-Y"),
+            // both would be inserted → duplicate agents by name.
+            let existing_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM agents WHERE LOWER(name) = LOWER(?1)",
+                rusqlite::params![&name],
+                |r| r.get(0),
+            ).unwrap_or(0);
+            if existing_count > 0 {
+                // Agent with same name already exists — skip to avoid duplicate
+                continue;
+            }
             let agent_code = format!("LOC-{}", loc_id);
             let _ = conn.execute(
                 "INSERT OR IGNORE INTO agents (agent_code, name, phone, city, area, address_notes, notes, is_active, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -514,6 +532,37 @@ fn sync_locations_to_agents(conn: &Connection) -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+/// v0.12.6: Clean up duplicate agents that have the same name (case-insensitive).
+/// Keeps the agent with the LOWEST id (first created), deletes the rest.
+/// Ledger entries cascade-delete with the agent (ON DELETE CASCADE).
+///
+/// This runs on every startup but is a no-op if no duplicates exist.
+fn cleanup_duplicate_agents(conn: &Connection) -> Result<()> {
+    // Find all agent names that appear more than once (case-insensitive)
+    let mut stmt = conn.prepare(
+        "SELECT LOWER(name) AS lname, COUNT(*) as cnt
+         FROM agents
+         GROUP BY LOWER(name)
+         HAVING cnt > 1"
+    )?;
+    let dupes: Vec<String> = stmt.query_map([], |row| {
+        row.get::<_, String>(0)
+    })?.filter_map(|r| r.ok()).collect();
+
+    for lname in dupes {
+        // Delete all agents with this name EXCEPT the one with the lowest id
+        // (the first-created one). Ledger entries cascade-delete.
+        conn.execute(
+            "DELETE FROM agents WHERE LOWER(name) = ?1 AND id NOT IN (
+                SELECT MIN(id) FROM agents WHERE LOWER(name) = ?1
+            )",
+            rusqlite::params![&lname],
+        )?;
+    }
+
     Ok(())
 }
 

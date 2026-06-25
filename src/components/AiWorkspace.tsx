@@ -342,7 +342,7 @@ export default function AiWorkspace() {
           <div key={i}>
             <div
               dir="ltr"
-              className={`text-sm ${msg.role === 'user' ? 'text-right' : 'text-left'}`}
+              className={`text-base ${msg.role === 'user' ? 'text-right' : 'text-left'}`}
             >
               <span
                 className={`inline-block px-3 py-2 rounded-xl max-w-[95%] ${
