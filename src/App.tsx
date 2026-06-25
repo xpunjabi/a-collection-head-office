@@ -8,7 +8,6 @@ import {
   Bot,
   FileText,
   Settings as SettingsIcon,
-  MapPin,
   UserCircle,
   Megaphone,
   Truck,
@@ -25,11 +24,17 @@ import Inventory from './pages/Inventory'
 import Automation from './pages/Automation'
 import Reports from './pages/Reports'
 import SettingsPage from './pages/Settings'
-import LocationsPage from './pages/Locations'
 import AgentsPage from './pages/Agents'
 import ShareCenter from './pages/ShareCenter'
 import PurchaseTripsPage from './pages/PurchaseTrips'
 import AiWorkspace from './components/AiWorkspace'
+
+// v0.12.4: Locations tab hidden — Agents table replaces it (single source of
+// truth for person + place). LocationsPage is still imported so the module
+// isn't dead-code-eliminated, but it's not reachable from the UI. The
+// sync_locations_to_agents migration still runs on startup to migrate any
+// legacy location data into the agents table.
+// import LocationsPage from './pages/Locations'
 
 const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -40,7 +45,6 @@ const tabs = [
   { id: 'inventory', label: 'Inventory', icon: Package },
   { id: 'agents', label: 'Agents', icon: UserCircle },
   { id: 'purchase_trips', label: 'Trips', icon: Truck },
-  { id: 'locations', label: 'Locations', icon: MapPin },
   { id: 'automation', label: 'Automation', icon: Bot },
   { id: 'reports', label: 'Reports', icon: FileText },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
@@ -66,7 +70,6 @@ function App() {
       case 'automation': return <Automation />
       case 'agents': return <AgentsPage />
       case 'purchase_trips': return <PurchaseTripsPage />
-      case 'locations': return <LocationsPage />
       case 'reports': return <Reports />
       case 'settings': return <SettingsPage />
       default: return <Dashboard />

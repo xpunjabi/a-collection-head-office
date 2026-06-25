@@ -496,11 +496,37 @@ fn get_relevant_knowledge(conn: &Connection, prompt: &str) -> Result<Vec<Knowled
     Ok(result)
 }
 
-pub async fn call_ai_provider(provider: &str, api_key: &str, model: &str, system_prompt: &str, user_prompt: &str, image_data: Option<&str>) -> Result<String, String> {
+/// A single message in a multi-turn conversation. Used by call_ai_provider
+/// to pass conversation history to the AI model so it can maintain context
+/// across turns.
+///
+/// - role: "user" or "assistant" (model)
+/// - content: the message text
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// Dispatcher for all AI providers. Passes conversation history (if any)
+/// to the provider so the model can maintain context across turns.
+///
+/// `history` is optional — if None or empty, the call is single-turn
+/// (backward compatible with existing callers like catalog_composer,
+/// marketing_engine, etc.).
+pub async fn call_ai_provider(
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    image_data: Option<&str>,
+    history: Option<&[ChatMessage]>,
+) -> Result<String, String> {
     match provider {
-        "gemini" => call_gemini(api_key, model, system_prompt, user_prompt, image_data).await,
-        "openai" => call_openai(api_key, model, system_prompt, user_prompt, image_data).await,
-        "claude" => call_claude(api_key, model, system_prompt, user_prompt, image_data).await,
+        "gemini" => call_gemini(api_key, model, system_prompt, user_prompt, image_data, history).await,
+        "openai" => call_openai(api_key, model, system_prompt, user_prompt, image_data, history).await,
+        "claude" => call_claude(api_key, model, system_prompt, user_prompt, image_data, history).await,
         // Local LLM (Ollama) uses a different API shape for multimodal — out of scope for this fix.
         "local" => call_local_llm(model, system_prompt, user_prompt).await,
         _ => Err(format!("Unsupported AI provider: {}", provider)),
@@ -593,7 +619,7 @@ IMPORTANT RULES:
 
 pub async fn generate_marketing_content(provider: &str, api_key: &str, model: &str, prompt: &str) -> Result<Vec<MarketingContent>, String> {
     let sys_prompt = "You are a social media marketing assistant for a Pakistani clothing business. Generate engaging posts in Roman Urdu or English.";
-    let response = call_ai_provider(provider, api_key, model, sys_prompt, prompt, None).await?;
+    let response = call_ai_provider(provider, api_key, model, sys_prompt, prompt, None, None).await?;
 
     let body = response.trim();
     let json_str = if body.starts_with("```") {
@@ -753,7 +779,14 @@ fn detect_mime_type(b64: &str) -> &'static str {
     }
 }
 
-async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str, image_data: Option<&str>) -> Result<String, String> {
+async fn call_gemini(
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    image_data: Option<&str>,
+    history: Option<&[ChatMessage]>,
+) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(45))
         .build()
@@ -764,12 +797,27 @@ async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_promp
         model, api_key
     );
 
+    // Build the contents array as a multi-turn conversation.
+    // Gemini's API expects: contents: [ {role: "user"/"model", parts: [...]}, ... ]
+    // We map "user" -> "user" and "assistant" -> "model".
+    let mut contents: Vec<serde_json::Value> = Vec::new();
+
+    // Append conversation history (if any) BEFORE the current user message.
+    // This gives the model context from previous turns.
+    if let Some(hist) = history {
+        for msg in hist.iter() {
+            let role = if msg.role == "assistant" { "model" } else { "user" };
+            contents.push(json!({
+                "role": role,
+                "parts": [{"text": msg.content}]
+            }));
+        }
+    }
+
+    // Current user message (with optional image)
     let mut parts = vec![json!({"text": user_prompt})];
-
     let has_image = image_data.is_some();
-
     if let Some(b64) = image_data {
-        // Strip data URI prefix if present (e.g. "data:image/jpeg;base64,...")
         let clean_b64 = if let Some(comma_pos) = b64.find(',') {
             &b64[comma_pos + 1..]
         } else {
@@ -783,14 +831,16 @@ async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_promp
             }
         }));
     }
+    contents.push(json!({
+        "role": "user",
+        "parts": parts
+    }));
 
     let mut payload = json!({
         "system_instruction": {
             "parts": [{"text": system_prompt}]
         },
-        "contents": [{
-            "parts": parts
-        }]
+        "contents": contents
     });
 
     // googleSearch tool conflicts with inline image data in Gemini API.
@@ -823,7 +873,14 @@ async fn call_gemini(api_key: &str, model: &str, system_prompt: &str, user_promp
     Ok(text.to_string())
 }
 
-async fn call_openai(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str, image_data: Option<&str>) -> Result<String, String> {
+async fn call_openai(
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    image_data: Option<&str>,
+    history: Option<&[ChatMessage]>,
+) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -831,18 +888,28 @@ async fn call_openai(api_key: &str, model: &str, system_prompt: &str, user_promp
 
     let url = "https://api.openai.com/v1/chat/completions";
 
+    // Build the messages array as a multi-turn conversation.
+    let mut messages: Vec<serde_json::Value> = vec![
+        json!({"role": "system", "content": system_prompt})
+    ];
+
+    // Append conversation history (if any) BEFORE the current user message.
+    if let Some(hist) = history {
+        for msg in hist.iter() {
+            messages.push(json!({"role": msg.role, "content": msg.content}));
+        }
+    }
+
     // Build user message content. If an image is attached, use the vision
     // content format: an array of {type: text} and {type: image_url} objects.
     // Otherwise, send a plain string (cheaper, smaller payload).
     let user_content: serde_json::Value = if let Some(b64) = image_data {
-        // Strip data URI prefix if present (e.g. "data:image/jpeg;base64,...")
         let clean_b64 = if let Some(comma_pos) = b64.find(',') {
             &b64[comma_pos + 1..]
         } else {
             b64
         };
         let mime = detect_mime_type(clean_b64);
-        // OpenAI vision format: data URI inline. Must include the mime prefix.
         let data_uri = format!("data:{};base64,{}", mime, clean_b64);
         json!([
             {"type": "text", "text": user_prompt},
@@ -851,13 +918,11 @@ async fn call_openai(api_key: &str, model: &str, system_prompt: &str, user_promp
     } else {
         json!(user_prompt)
     };
+    messages.push(json!({"role": "user", "content": user_content}));
 
     let payload = json!({
         "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content}
-        ]
+        "messages": messages
     });
 
     let res = client.post(url)
@@ -876,8 +941,6 @@ async fn call_openai(api_key: &str, model: &str, system_prompt: &str, user_promp
         .await
         .map_err(|e| format!("Failed parsing OpenAI response: {}", e))?;
 
-    // OpenAI vision models may return content as a string OR as an array of
-    // content blocks. Handle both formats defensively.
     let content_val = &res_json["choices"][0]["message"]["content"];
     let text = if let Some(s) = content_val.as_str() {
         s.to_string()
@@ -896,7 +959,14 @@ async fn call_openai(api_key: &str, model: &str, system_prompt: &str, user_promp
     Ok(text)
 }
 
-async fn call_claude(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str, image_data: Option<&str>) -> Result<String, String> {
+async fn call_claude(
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    image_data: Option<&str>,
+    history: Option<&[ChatMessage]>,
+) -> Result<String, String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -904,21 +974,29 @@ async fn call_claude(api_key: &str, model: &str, system_prompt: &str, user_promp
 
     let url = "https://api.anthropic.com/v1/messages";
 
-    // Build user message content. Claude's messages API uses an array of
-    // content blocks. For text-only, a single {type: text} block suffices.
-    // For image+text, prepend an {type: image, source: {type: base64, ...}}
-    // block followed by the text block.
+    // Build the messages array as a multi-turn conversation.
+    // Claude's messages API expects: messages: [{role, content: [blocks]}, ...]
+    let mut messages: Vec<serde_json::Value> = Vec::new();
+
+    // Append conversation history (if any) BEFORE the current user message.
+    if let Some(hist) = history {
+        for msg in hist.iter() {
+            messages.push(json!({
+                "role": msg.role,
+                "content": [{"type": "text", "text": msg.content}]
+            }));
+        }
+    }
+
+    // Current user message with optional image
     let mut content_blocks: Vec<serde_json::Value> = Vec::new();
     if let Some(b64) = image_data {
-        // Strip data URI prefix if present (e.g. "data:image/jpeg;base64,...")
         let clean_b64 = if let Some(comma_pos) = b64.find(',') {
             &b64[comma_pos + 1..]
         } else {
             b64
         };
         let mime = detect_mime_type(clean_b64);
-        // Claude expects the media_type as one of: image/jpeg, image/png,
-        // image/gif, image/webp. Our detect_mime_type returns one of these.
         content_blocks.push(json!({
             "type": "image",
             "source": {
@@ -932,12 +1010,13 @@ async fn call_claude(api_key: &str, model: &str, system_prompt: &str, user_promp
         "type": "text",
         "text": user_prompt
     }));
+    messages.push(json!({"role": "user", "content": content_blocks}));
 
     let payload = json!({
         "model": model,
         "max_tokens": 1024,
         "system": system_prompt,
-        "messages": [{"role": "user", "content": content_blocks}]
+        "messages": messages
     });
 
     let res = client.post(url)
@@ -957,8 +1036,6 @@ async fn call_claude(api_key: &str, model: &str, system_prompt: &str, user_promp
         .await
         .map_err(|e| format!("Failed parsing Claude response: {}", e))?;
 
-    // Claude's response.content is always an array of content blocks.
-    // Concatenate all {type: text} blocks.
     let content_arr = res_json["content"].as_array()
         .ok_or_else(|| "Failed to extract text from Claude response".to_string())?;
     let mut combined = String::new();

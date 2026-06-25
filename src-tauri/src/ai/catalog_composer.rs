@@ -69,7 +69,7 @@ Return ONLY valid JSON without any markdown formatting, code blocks, or extra te
         }
     }
 
-    let response = super::call_ai_provider(provider, api_key, model, &system_prompt, &user_prompt, image_base64).await?;
+    let response = super::call_ai_provider(provider, api_key, model, &system_prompt, &user_prompt, image_base64, None).await?;
 
     let body = response.trim();
 

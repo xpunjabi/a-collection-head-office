@@ -497,7 +497,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
 
     try {
-      const response: AiResponse = await invoke('ask_ai', { prompt, imageData: imageData || null });
+      // v0.12.4: Pass conversation history (last 10 messages) to ask_ai so
+      // the AI can maintain context across turns. We exclude the initial
+      // greeting message (role=assistant with no preceding user message)
+      // and skip empty/system messages. We also skip the user message we
+      // just added above (it's already in aiMessages at this point, but we
+      // want history BEFORE the current prompt).
+      const currentMessages = get().aiMessages
+      // Take all messages except the last one (which is the user message we
+      // just added) and the very first greeting. Limit to last 10 to keep
+      // the payload small.
+      const history = currentMessages
+        .slice(1, -1) // skip greeting (index 0) and current user msg (last)
+        .slice(-10)   // last 10 messages
+        .filter(m => m.text && m.text.trim().length > 0)
+        .map(m => ({
+          role: m.role === 'user' ? 'user' : 'assistant',
+          content: m.text,
+        }))
+      const response: AiResponse = await invoke('ask_ai', {
+        prompt,
+        imageData: imageData || null,
+        history: history.length > 0 ? history : null,
+      });
 
       // If we sent an image and got a product draft, save the image locally
       if (imageData && response.product_draft) {

@@ -151,7 +151,7 @@ Return ONLY valid JSON without any markdown formatting, code blocks, or extra te
         hashtag_count
     );
 
-    let response = super::call_ai_provider(provider, api_key, model, system_prompt, &user_prompt, None).await?;
+    let response = super::call_ai_provider(provider, api_key, model, system_prompt, &user_prompt, None, None).await?;
 
     let body = response.trim();
 

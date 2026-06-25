@@ -269,7 +269,12 @@ pub async fn get_customer_report(state: State<'_, DbState>) -> Result<CustomerSu
 // ==================== AI ====================
 
 #[tauri::command]
-pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Option<String>) -> Result<AiResponse, String> {
+pub async fn ask_ai(
+    state: State<'_, DbState>,
+    prompt: String,
+    image_data: Option<String>,
+    history: Option<Vec<ai::ChatMessage>>,
+) -> Result<AiResponse, String> {
     println!("[ask_ai] instruction='{}' has_image={}", prompt, image_data.is_some());
 
     let extraction = if let Some(ref b64) = image_data {
@@ -430,7 +435,11 @@ pub async fn ask_ai(state: State<'_, DbState>, prompt: String, image_data: Optio
         sp
     };
 
-    let response_text = ai::call_ai_provider(&provider, &api_key, &model, &system_prompt, &prompt, image_data.as_deref()).await?;
+    let response_text = ai::call_ai_provider(
+        &provider, &api_key, &model, &system_prompt, &prompt,
+        image_data.as_deref(),
+        history.as_deref(),
+    ).await?;
     {
         let conn = state.0.lock().await;
         ai::log_request(&conn, &prompt, &response_text, &provider)?;
