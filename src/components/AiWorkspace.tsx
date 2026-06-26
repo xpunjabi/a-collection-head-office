@@ -1,11 +1,11 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { useAppStore, CatalogDraft } from '../stores/store'
+import { useAppStore } from '../stores/store'
 import ProductDraftCard from './ProductDraftCard'
 import FormattedMessage from './FormattedMessage'
 import { invoke } from '@tauri-apps/api/core'
 import {
   Send, X, Plus, Image, Link2, FileText, Upload,
-  Trash2, GripVertical, Sparkles, Check, Ban, Copy, Sparkle
+  Trash2, GripVertical, Sparkles, Check, Ban, Copy, Sparkle, Edit3
 } from 'lucide-react'
 import { shareToPlatform } from '../utils/share'
 
@@ -74,6 +74,8 @@ export default function AiWorkspace() {
   const [toast, setToast] = useState<string | null>(null)
   const [savingIndex, setSavingIndex] = useState<number | null>(null)
   const [generatingIndex, setGeneratingIndex] = useState<number | null>(null)
+  const [editingDraftIndex, setEditingDraftIndex] = useState<number | null>(null)
+  const [draftEdits, setDraftEdits] = useState<Record<number, { title: string; brand: string; fabric: string; design_code: string; notes: string }>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -110,33 +112,6 @@ export default function AiWorkspace() {
 
   const handleDiscardDraft = (index: number) => {
     removeAiMessage(index)
-  }
-
-  const handleSaveAndGenerate = async (index: number, draft: CatalogDraft) => {
-    setGeneratingIndex(index)
-    try {
-      const productId = await invoke<number>('save_catalog_draft', { draft })
-      const post = await invoke<import('../stores/store').MarketingPost>('generate_social_post', { productId })
-      setToast('Item added to catalog!')
-      removeAiMessage(index)
-      const postMsg = {
-        role: 'assistant' as const,
-        text: '',
-        social_post: post,
-      }
-      useAppStore.setState((state) => ({
-        aiMessages: [...state.aiMessages, postMsg as any],
-      }))
-    } catch (err) {
-      const msg = String(err)
-      if (msg.includes('Duplicate item found')) {
-        setToast('Warning: This item is already in your catalog!')
-      } else {
-        setToast(`Failed: ${err}`)
-      }
-    } finally {
-      setGeneratingIndex(null)
-    }
   }
 
   const handleGeneratePostForExisting = async (index: number, itemId: string) => {
@@ -423,33 +398,84 @@ export default function AiWorkspace() {
                       ) : null}
                       <div className="text-violet-300 font-semibold">Catalog Draft</div>
                     </div>
-                    <div className="text-gray-300">
-                      <span className="text-gray-500">Title:</span>{' '}
-                      {msg.fast_path_data.data.title}
-                    </div>
-                    {msg.fast_path_data.data.brand && (
-                      <div className="text-gray-300">
-                        <span className="text-gray-500">Brand:</span>{' '}
-                        {msg.fast_path_data.data.brand}
-                      </div>
-                    )}
-                    {msg.fast_path_data.data.fabric && (
-                      <div className="text-gray-300">
-                        <span className="text-gray-500">Fabric:</span>{' '}
-                        {msg.fast_path_data.data.fabric}
-                      </div>
-                    )}
-                    {msg.fast_path_data.data.design_code && (
-                      <div className="text-gray-300">
-                        <span className="text-gray-500">Design Code:</span>{' '}
-                        {msg.fast_path_data.data.design_code}
-                      </div>
-                    )}
-                    {msg.fast_path_data.data.notes && (
-                      <div className="text-gray-400 italic mt-1">
-                        {msg.fast_path_data.data.notes}
-                      </div>
-                    )}
+                    {/* Editable draft fields — when Edit Draft is clicked, fields become inputs */}
+                    {(() => {
+                      const isEditing = editingDraftIndex === i
+                      const edit = draftEdits[i] || {
+                        title: msg.fast_path_data.data.title,
+                        brand: msg.fast_path_data.data.brand || '',
+                        fabric: msg.fast_path_data.data.fabric || '',
+                        design_code: msg.fast_path_data.data.design_code || '',
+                        notes: msg.fast_path_data.data.notes || '',
+                      }
+                      const setField = (field: string, value: string) => {
+                        setDraftEdits(prev => ({ ...prev, [i]: { ...edit, [field]: value } }))
+                      }
+                      // Update the actual draft data when editing
+                      if (isEditing && draftEdits[i]) {
+                        msg.fast_path_data.data.title = draftEdits[i].title
+                        msg.fast_path_data.data.brand = draftEdits[i].brand || undefined
+                        msg.fast_path_data.data.fabric = draftEdits[i].fabric || undefined
+                        msg.fast_path_data.data.design_code = draftEdits[i].design_code || undefined
+                        msg.fast_path_data.data.notes = draftEdits[i].notes || undefined
+                      }
+                      return (
+                        <>
+                          <div className="text-gray-300">
+                            <span className="text-gray-500">Title:</span>{' '}
+                            {isEditing ? (
+                              <input type="text" value={edit.title} onChange={e => { setField('title', e.target.value); if (!draftEdits[i]) setDraftEdits(prev => ({ ...prev, [i]: edit })) }}
+                                className="bg-slate-950 border border-violet-500/30 rounded px-1 py-0.5 text-xs text-gray-200 w-full mt-0.5" />
+                            ) : (
+                              <span>{msg.fast_path_data.data.title}</span>
+                            )}
+                          </div>
+                          {(msg.fast_path_data.data.brand || isEditing) && (
+                            <div className="text-gray-300">
+                              <span className="text-gray-500">Brand:</span>{' '}
+                              {isEditing ? (
+                                <input type="text" value={edit.brand} onChange={e => setField('brand', e.target.value)}
+                                  className="bg-slate-950 border border-violet-500/30 rounded px-1 py-0.5 text-xs text-gray-200 w-full mt-0.5" />
+                              ) : (
+                                <span>{msg.fast_path_data.data.brand}</span>
+                              )}
+                            </div>
+                          )}
+                          {(msg.fast_path_data.data.fabric || isEditing) && (
+                            <div className="text-gray-300">
+                              <span className="text-gray-500">Fabric:</span>{' '}
+                              {isEditing ? (
+                                <input type="text" value={edit.fabric} onChange={e => setField('fabric', e.target.value)}
+                                  className="bg-slate-950 border border-violet-500/30 rounded px-1 py-0.5 text-xs text-gray-200 w-full mt-0.5" />
+                              ) : (
+                                <span>{msg.fast_path_data.data.fabric}</span>
+                              )}
+                            </div>
+                          )}
+                          {(msg.fast_path_data.data.design_code || isEditing) && (
+                            <div className="text-gray-300">
+                              <span className="text-gray-500">Design Code:</span>{' '}
+                              {isEditing ? (
+                                <input type="text" value={edit.design_code} onChange={e => setField('design_code', e.target.value)}
+                                  className="bg-slate-950 border border-violet-500/30 rounded px-1 py-0.5 text-xs text-gray-200 w-full mt-0.5" />
+                              ) : (
+                                <span>{msg.fast_path_data.data.design_code}</span>
+                              )}
+                            </div>
+                          )}
+                          {(msg.fast_path_data.data.notes || isEditing) && (
+                            <div className="text-gray-400 mt-1">
+                              {isEditing ? (
+                                <textarea value={edit.notes} onChange={e => setField('notes', e.target.value)} rows={2}
+                                  className="bg-slate-950 border border-violet-500/30 rounded px-1 py-0.5 text-xs text-gray-200 w-full" placeholder="Notes..." />
+                              ) : (
+                                <span className="italic">{msg.fast_path_data.data.notes}</span>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )
+                    })()}
                     {msg.fast_path_data.data.web_evidence_count && (
                       <div className="text-cyan-400/80 text-[10px] mt-1.5 border-t border-violet-800/30 pt-1">
                         Web Evidence: Found {msg.fast_path_data.data.web_evidence_count} matching result{msg.fast_path_data.data.web_evidence_count !== 1 ? 's' : ''} from internet search
@@ -465,16 +491,15 @@ export default function AiWorkspace() {
                         <span>{savingIndex === i ? 'Saving...' : 'Add to Catalog'}</span>
                       </button>
                       <button
-                        onClick={() => handleSaveAndGenerate(i, msg.fast_path_data!.data)}
-                        disabled={savingIndex === i || generatingIndex === i}
-                        className="flex items-center space-x-1 px-2.5 py-1 bg-violet-600 hover:bg-violet-500 disabled:bg-violet-800 text-white rounded text-[11px] font-medium transition-colors"
+                        onClick={() => setEditingDraftIndex(editingDraftIndex === i ? null : i)}
+                        className="flex items-center space-x-1 px-2.5 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-[11px] font-medium transition-colors"
                       >
-                        <Sparkle size={12} />
-                        <span>{generatingIndex === i ? 'Generating...' : 'Save & Generate Post'}</span>
+                        <Edit3 size={12} />
+                        <span>{editingDraftIndex === i ? 'Done' : 'Edit Draft'}</span>
                       </button>
                       <button
                         onClick={() => handleDiscardDraft(i)}
-                        disabled={savingIndex === i || generatingIndex === i}
+                        disabled={savingIndex === i}
                         className="flex items-center space-x-1 px-2.5 py-1 bg-red-600/60 hover:bg-red-500/80 disabled:opacity-50 text-red-200 rounded text-[11px] font-medium transition-colors"
                       >
                         <Ban size={12} />

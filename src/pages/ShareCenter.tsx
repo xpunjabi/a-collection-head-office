@@ -197,21 +197,24 @@ export default function ShareCenter() {
 
     const retailPrice = (product as any).retail_price?.toFixed(0) || (product.sale_price * 1.2).toFixed(0)
     const saveAmount = (parseFloat(retailPrice) - product.sale_price).toFixed(0)
+    // Only show crossed-out retail + save amount if retail > sale (otherwise Save Rs. 0 looks bad)
+    const hasDiscount = parseFloat(retailPrice) > product.sale_price
+    const priceBlock = hasDiscount
+      ? `🔥 SALE Rs. ${product.sale_price.toFixed(0)}\n~~Retail Rs. ${retailPrice}~~\nSave Rs. ${saveAmount}!`
+      : `🔥 PRICE Rs. ${product.sale_price.toFixed(0)}`
 
     const platformPrompts: Record<string, string> = {
       'whatsapp_status': `Short WhatsApp Status (2-3 lines). PRICE FIRST at top:
-🔥 SALE Rs. ${product.sale_price.toFixed(0)}
-~~Retail Rs. ${retailPrice}~~
-Save Rs. ${saveAmount}!
+${priceBlock}
 Then 2 lines warm+urgent. One Punjabi phrase if natural. End with 'WhatsApp karein!'`,
-      'whatsapp_direct': `2 line punchy pitch. Price first line. 'Abhi DM karein!'`,
+      'whatsapp_direct': `2 line punchy pitch. Price first line: ${priceBlock.split('\n')[0]}. 'Abhi DM karein!'`,
       'facebook': `Facebook post (3-5 lines). PRICE BLOCK at top:
-🔥 SALE Rs. ${product.sale_price.toFixed(0)}
-~~Retail Rs. ${retailPrice}~~
-Save Rs. ${saveAmount}!
+${priceBlock}
 Then emotional content. Address 'Girls ❤️' or 'Ladies ❤️'. Include #NarowalFashion #Zafarwal #Shakargarh. Emojis.`,
-      'instagram': `Instagram caption (3-5 lines). PRICE BLOCK first. Then trendy+emotional. Line breaks. 5-8 hashtags: #NarowalFashion #NarowalLawn #Zafarwal #Shakargarh #instafashion`,
-      'tiktok': `TikTok caption (2-3 lines). Price first. Hook-driven. MUST include #fyp #foryou #NarowalFashion #Zafarwal.`,
+      'instagram': `Instagram caption (3-5 lines). PRICE BLOCK first:
+${priceBlock}
+Then trendy+emotional. Line breaks. 5-8 hashtags: #NarowalFashion #NarowalLawn #Zafarwal #Shakargarh #instafashion`,
+      'tiktok': `TikTok caption (2-3 lines). Price first: ${priceBlock.split('\n')[0]}. Hook-driven. MUST include #fyp #foryou #NarowalFashion #Zafarwal.`,
     }
 
     const prompt = `${angleText[shareAngle]}
