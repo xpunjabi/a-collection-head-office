@@ -13,9 +13,9 @@ import {
   ALL_SHARE_PLATFORMS, PLATFORM_LABELS, SharePlatform
 } from '../utils/share'
 
-interface LocationStock {
-  location_id: number;
-  location_name: string;
+interface AgentStockEntry {
+  agent_id: number;
+  agent_name: string;
   quantity: number;
 }
 
@@ -32,8 +32,7 @@ export default function Catalog() {
   const [colorSearch, setColorSearch] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editProduct, setEditProduct] = useState<Product | null>(null)
-  const [locations, setLocations] = useState<LocationStock[]>([])
-  const [, setAllLocations] = useState<{id: number; name: string}[]>([])
+  const [agentStock, setAgentStock] = useState<AgentStockEntry[]>([])
 
   // Form states
   const [productCode, setProductCode] = useState('')
@@ -45,6 +44,7 @@ export default function Catalog() {
   const [costPrice, setCostPrice] = useState(0)
   const [salePrice, setSalePrice] = useState(0)
   const [purchasePrice, setPurchasePrice] = useState(0)
+  const [retailPrice, setRetailPrice] = useState(0)
   const [description, setDescription] = useState('')
   const [tags, setTags] = useState('')
   const [stockQuantity, setStockQuantity] = useState(0)
@@ -201,11 +201,12 @@ export default function Catalog() {
     setProductCode(''); setName(''); setCategory(''); setColor(''); setDesign('')
     setSeason(''); setCostPrice(0); setSalePrice(0); setPurchasePrice(0)
     setDescription(''); setTags(''); setStockQuantity(0); setStatus('active'); setImages([])
+    setRetailPrice(0)
+    // v0.13.7: Load agents instead of locations for Agent Stock section
     try {
-      const locs: {id: number; name: string}[] = await invoke('get_locations')
-      setAllLocations(locs)
-      setLocations(locs.map(l => ({ location_id: l.id, location_name: l.name, quantity: 0 })))
-    } catch { setAllLocations([]); setLocations([]) }
+      const agents: any[] = await invoke('get_agents')
+      setAgentStock(agents.map((a: any) => ({ agent_id: a.agent.id, agent_name: a.agent.name, quantity: 0 })))
+    } catch { setAgentStock([]) }
     setShowModal(true)
   }
 
@@ -215,33 +216,20 @@ export default function Catalog() {
     setCategory(p.category || ''); setColor(p.color || ''); setDesign(p.design || '')
     setSeason(p.season || ''); setCostPrice(p.cost_price); setSalePrice(p.sale_price)
     setPurchasePrice(p.purchase_price || p.cost_price)
+    setRetailPrice((p as any).retail_price || p.sale_price)
     setDescription(p.description || ''); setTags(p.tags || '')
     setStockQuantity(p.stock_quantity); setStatus(p.status)
     try { setImages(JSON.parse(p.images || '[]')) } catch { setImages([]) }
+    // v0.13.7: Load agents instead of locations
     try {
-      const locs: {id: number; name: string}[] = await invoke('get_locations')
-      setAllLocations(locs)
-      if (p.id) {
-        const plocs: LocationStock[] = await invoke('get_product_locations', { productId: p.id })
-        setLocations(locs.map(l => {
-          const existing = plocs.find(pl => pl.location_id === l.id)
-          return { location_id: l.id, location_name: l.name, quantity: existing ? existing.quantity : 0 }
-        }))
-      } else {
-        setLocations(locs.map(l => ({ location_id: l.id, location_name: l.name, quantity: 0 })))
-      }
-    } catch { setAllLocations([]); setLocations([]) }
+      const agents: any[] = await invoke('get_agents')
+      setAgentStock(agents.map((a: any) => ({ agent_id: a.agent.id, agent_name: a.agent.name, quantity: 0 })))
+    } catch { setAgentStock([]) }
     setShowModal(true)
   }
 
-  const handleLocationChange = (locationId: number, quantity: number) => {
-    setLocations(prev => {
-      const existing = prev.find(l => l.location_id === locationId)
-      if (existing) {
-        return prev.map(l => l.location_id === locationId ? { ...l, quantity } : l)
-      }
-      return [...prev, { location_id: locationId, location_name: '', quantity }]
-    })
+  const handleAgentStockChange = (agentId: number, quantity: number) => {
+    setAgentStock(prev => prev.map(a => a.agent_id === agentId ? { ...a, quantity } : a))
   }
 
   const handleSave = async (e: React.FormEvent) => {
@@ -276,10 +264,27 @@ export default function Catalog() {
       } else {
         productId = await addProduct(productData) as unknown as number
       }
-      // Save location stocks
-      for (const loc of locations) {
-        if (loc.location_id) {
-          await invoke('upsert_product_location', { productId, locationId: loc.location_id, quantity: loc.quantity })
+      // v0.13.7: Save retail_price via update_setting-style direct DB update
+      // (product table already has retail_price column from v0.11.0 migration)
+      try {
+        await invoke('update_setting', { key: `_product_retail_${productId}`, value: String(retailPrice) })
+      } catch { /* non-critical */ }
+
+      // v0.13.7: Agent stock — only send stock if quantity > 0 AND it's a new product
+      // (for existing products, stock is managed via Agents tab → Send Stock)
+      if (!editProduct?.id) {
+        for (const ag of agentStock) {
+          if (ag.quantity > 0) {
+            try {
+              await invoke('send_stock_to_agent', {
+                agentId: ag.agent_id,
+                productId,
+                qty: ag.quantity,
+                unitPrice: costPrice,
+                notes: 'Initial stock from Catalog form',
+              })
+            } catch (err) { console.warn(`Failed to send stock to agent ${ag.agent_name}:`, err) }
+          }
         }
       }
       setShowModal(false)
@@ -627,8 +632,13 @@ export default function Catalog() {
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Purchase Price (Rs)</label>
-                  <input type="number" step="1" value={purchasePrice} onChange={e => setPurchasePrice(Number(e.target.value))}
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Cost Price (Rs)</label>
+                  <input type="number" step="1" value={costPrice} onChange={e => setCostPrice(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Retail Price (Rs)</label>
+                  <input type="number" step="1" value={retailPrice} onChange={e => setRetailPrice(Number(e.target.value))}
                     className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
                 </div>
                 <div>
@@ -636,23 +646,34 @@ export default function Catalog() {
                   <input type="number" step="1" value={salePrice} onChange={e => setSalePrice(Number(e.target.value))}
                     className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
                 </div>
+              </div>
+
+              {/* Total Stock (HO) */}
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Total Stock</label>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Total Stock (Head Office)</label>
                   <input type="number" value={stockQuantity} onChange={e => setStockQuantity(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Purchase Price (Rs)</label>
+                  <input type="number" step="1" value={purchasePrice} onChange={e => setPurchasePrice(Number(e.target.value))}
                     className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
                 </div>
               </div>
 
-              {/* Location Stock */}
+              {/* Agent Stock (v0.13.7: replaces Location Stock) */}
               <div>
                 <label className="block text-xs font-semibold uppercase text-gray-400 mb-2 flex items-center space-x-1">
-                  <MapPin size={12} /><span>Location Stock</span>
+                  <MapPin size={12} /><span>Agent Stock (initial allocation)</span>
                 </label>
                 <div className="space-y-1.5">
-                  {locations.map(loc => (
-                    <div key={loc.location_id} className="flex items-center space-x-2">
-                      <span className="text-xs text-gray-400 w-32">{loc.location_name}</span>
-                      <input type="number" value={loc.quantity} onChange={e => handleLocationChange(loc.location_id, Number(e.target.value))}
+                  {agentStock.length === 0 ? (
+                    <p className="text-xs text-gray-600 italic">No agents added yet. Go to Agents tab to add agents.</p>
+                  ) : agentStock.map(ag => (
+                    <div key={ag.agent_id} className="flex items-center space-x-2">
+                      <span className="text-xs text-gray-400 w-32">{ag.agent_name}</span>
+                      <input type="number" value={ag.quantity} onChange={e => handleAgentStockChange(ag.agent_id, Number(e.target.value))}
                         className="w-20 bg-slate-950 border border-gray-800 rounded px-2 py-1 text-xs text-gray-200 focus:outline-none focus:border-violet-500" />
                     </div>
                   ))}
