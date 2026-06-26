@@ -234,9 +234,92 @@ Write in attractive Roman Urdu or English. Return ONLY the post text — no expl
       alert('Please select a product first.')
       return
     }
-    // Generate all 5 platforms sequentially (to avoid API rate limits)
-    for (const p of PLATFORMS) {
-      await handleGenerateCaption(p.id)
+    const product = selectedProduct!
+    setIsGenerating(true)
+    setGeneratingPlatform('all')
+
+    const angleText: Record<ShareAngle, string> = {
+      new_arrival: 'This is a NEW ARRIVAL — emphasize freshness and being the first to get it.',
+      discount: 'This is a DISCOUNT post — emphasize the price drop and urgency.',
+      premium: 'This is a PREMIUM product — emphasize quality, luxury, and exclusivity.',
+      budget: 'This is a BUDGET-FRIENDLY pick — emphasize value for money and affordability.',
+      limited_stock: 'This is a LIMITED STOCK alert — emphasize scarcity and urgency to buy now.',
+    }
+
+    // v0.13.2: SINGLE API call with JSON output — saves 4 API calls
+    // (was 5 sequential calls, now just 1). Faster for user + saves quota.
+    const prompt = `${angleText[shareAngle]}
+
+Product Details:
+- Name: ${product.name}
+- SKU: ${product.sku}
+- Category: ${product.category || 'Clothing'}
+- Price: Rs. ${product.sale_price.toFixed(0)}
+- Description: ${product.description || 'Premium quality'}
+- Tags: ${product.tags || ''}
+
+Generate marketing content for ALL 5 platforms in ONE response. Return ONLY valid JSON (no markdown, no code blocks, no explanation). Use this exact structure:
+
+{
+  "whatsapp_status": "2-3 line friendly WhatsApp Status. Personal tone. Include price + 'WhatsApp us to order'. 1-2 emojis max.",
+  "whatsapp_direct": "2 line punchy direct pitch. Product name + price + 'DM to order'.",
+  "facebook": "3-5 line Facebook post. Trust-building. Include product details, price, location (Narowal), WhatsApp contact. 1-2 hashtags. A few emojis.",
+  "instagram": "3-5 line trendy Instagram caption. Emoji-rich, line breaks. Product story + price + CTA. 5-8 hashtags including #NarowalFashion #PakistaniLawn.",
+  "tiktok": "2-3 line TikTok caption. Hook-driven, casual, Gen-Z tone. MUST include #fyp #foryou + 2-3 fashion hashtags.",
+  "hashtags": ["#hashtag1", "#hashtag2", "..."],
+  "cta": "Short call-to-action for all platforms"
+}
+
+Write in attractive Roman Urdu or English. Return ONLY the JSON.`
+
+    try {
+      const response: any = await invoke('ask_ai', { prompt })
+      const text = response.text || response || ''
+
+      // Parse JSON from response (AI may wrap in markdown or add text)
+      let jsonStr = text.trim()
+      // Remove markdown code block if present
+      if (jsonStr.includes('```')) {
+        const start = jsonStr.indexOf('{')
+        const end = jsonStr.lastIndexOf('}')
+        if (start !== -1 && end !== -1) {
+          jsonStr = jsonStr.substring(start, end + 1)
+        }
+      } else {
+        const start = jsonStr.indexOf('{')
+        const end = jsonStr.lastIndexOf('}')
+        if (start !== -1 && end !== -1) {
+          jsonStr = jsonStr.substring(start, end + 1)
+        }
+      }
+
+      try {
+        const parsed = JSON.parse(jsonStr)
+        setCaptions({
+          'whatsapp_status': parsed.whatsapp_status || '',
+          'whatsapp_direct': parsed.whatsapp_direct || '',
+          'facebook': parsed.facebook || '',
+          'instagram': parsed.instagram || '',
+          'tiktok': parsed.tiktok || '',
+        })
+        // Store hashtags + CTA for later use (e.g., Copy All)
+        if (parsed.hashtags) {
+          setCaptions(prev => ({ ...prev, '_hashtags': Array.isArray(parsed.hashtags) ? parsed.hashtags.join(' ') : '' }))
+        }
+        if (parsed.cta) {
+          setCaptions(prev => ({ ...prev, '_cta': parsed.cta }))
+        }
+      } catch (parseErr) {
+        // JSON parse failed — fallback: put raw text in all platforms
+        console.error('JSON parse failed:', parseErr)
+        alert('AI returned non-JSON response. Try again or generate per-platform.')
+        setCaptions({ 'whatsapp_status': text })
+      }
+    } catch (err) {
+      alert(`AI Generation failed: ${err}`)
+    } finally {
+      setIsGenerating(false)
+      setGeneratingPlatform(null)
     }
   }
 
@@ -256,6 +339,26 @@ Write in attractive Roman Urdu or English. Return ONLY the post text — no expl
     try {
       await navigator.clipboard.writeText(text)
       setCopiedPlatform(platformId)
+      setTimeout(() => setCopiedPlatform(null), 2000)
+    } catch (err) {
+      alert(`Copy failed: ${err}`)
+    }
+  }
+
+  // v0.13.2: Copy All captions to clipboard as formatted text
+  const handleCopyAll = async () => {
+    const allText = PLATFORMS.map(p => {
+      const caption = captions[p.id]
+      if (!caption) return null
+      return `=== ${p.label} ===\n${caption}`
+    }).filter(Boolean).join('\n\n')
+    if (!allText) {
+      alert('No captions to copy.')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(allText)
+      setCopiedPlatform('all')
       setTimeout(() => setCopiedPlatform(null), 2000)
     } catch (err) {
       alert(`Copy failed: ${err}`)
@@ -477,7 +580,7 @@ Write in attractive Roman Urdu or English. Return ONLY the post text — no expl
               className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
             >
               <Sparkle size={14} />
-              <span>{isGenerating ? 'AI Generating...' : 'Generate All (AI)'}</span>
+              <span>{isGenerating ? 'AI Generating (1 call)...' : 'Generate All (AI — 1 call)'}</span>
             </button>
             <div className="flex space-x-2">
               <button
@@ -488,12 +591,24 @@ Write in attractive Roman Urdu or English. Return ONLY the post text — no expl
                 <Save size={12} /><span>Save Drafts</span>
               </button>
               <button
+                onClick={handleCopyAll}
+                disabled={Object.keys(captions).length === 0}
+                className="flex-1 flex items-center justify-center space-x-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-gray-200 rounded-lg text-xs font-medium"
+              >
+                {copiedPlatform === 'all' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                <span>{copiedPlatform === 'all' ? 'Copied!' : 'Copy All'}</span>
+              </button>
+              <button
                 onClick={handleTeachAI}
                 disabled={Object.keys(captions).length === 0}
                 className="flex-1 flex items-center justify-center space-x-1 px-3 py-2 bg-amber-600/20 hover:bg-amber-600/40 disabled:opacity-50 text-amber-300 rounded-lg text-xs font-medium"
               >
                 <Brain size={12} /><span>Teach AI</span>
               </button>
+            </div>
+            {/* Teach AI clarification */}
+            <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-2 text-[10px] text-gray-500">
+              <strong className="text-amber-400">Teach AI</strong> saves captions to local SQLite database (ai_knowledge table). AI reads these on future calls — no cloud dependency.
             </div>
           </div>
 
