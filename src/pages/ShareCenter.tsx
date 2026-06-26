@@ -215,7 +215,7 @@ Product Details:
 
 ${platformPrompts[platformId]}
 
-Write in attractive Roman Urdu or English. Return ONLY the post text — no explanations, no preamble.`
+Write in Hinglish (Roman Urdu + English where necessary). Target audience: Narowal district women/girls age 10-50. Return ONLY the post text — no explanations, no preamble.`
 
     try {
       const response: any = await invoke('ask_ai', { prompt })
@@ -270,7 +270,7 @@ Generate marketing content for ALL 5 platforms in ONE response. Return ONLY vali
   "cta": "Short call-to-action for all platforms"
 }
 
-Write in attractive Roman Urdu or English. Return ONLY the JSON.`
+Write in Hinglish (Roman Urdu + English where necessary). Target audience: Narowal district women/girls age 10-50. Return ONLY the JSON.`
 
     try {
       const response: any = await invoke('ask_ai', { prompt })
