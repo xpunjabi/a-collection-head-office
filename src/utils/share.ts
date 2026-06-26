@@ -101,39 +101,63 @@ export function buildProductShareText(opts: {
 /**
  * Share `text` to the given platform.
  *
+ * v0.13.4: If `imageData` (base64) is provided, the image is saved to the
+ * user's Desktop as a file before opening the share URL. This allows the
+ * user to manually attach the image when posting (browsers/Tauri cannot
+ * auto-attach images to WhatsApp/FB/IG share URLs).
+ *
  * Platform behavior:
- * - WhatsApp: opens wa.me/?text=... (works on web + mobile, pre-fills text)
- * - Twitter/X: opens twitter.com/intent/tweet?text=... (pre-fills text)
+ * - WhatsApp: opens wa.me/?text=... (pre-fills text). Image saved to Desktop.
+ * - Twitter/X: opens twitter.com/intent/tweet?text=... (pre-fills text).
  * - Facebook: COPIES text to clipboard + opens Facebook + alerts user.
- *   Facebook deprecated the `quote` parameter in sharer.php — the sharer
- *   dialog no longer accepts pre-filled text via URL. The user must
- *   manually paste (Ctrl+V) in the Facebook post composer.
- * - Instagram: copies text to clipboard + alerts user (Instagram has no
- *   web share URL at all).
+ *   Image saved to Desktop for manual attachment.
+ * - Instagram: copies text to clipboard + alerts user.
+ *   Image saved to Desktop for manual attachment.
  *
  * Returns true if the share was initiated, false if the platform is unknown.
  */
-export async function shareToPlatform(platform: SharePlatform, text: string): Promise<boolean> {
+export async function shareToPlatform(
+  platform: SharePlatform,
+  text: string,
+  imageData?: string | null,
+): Promise<boolean> {
   const encoded = encodeURIComponent(text)
   let url = ''
+
+  // v0.13.4: If image data is provided, save it to Desktop so user can
+  // manually attach it to the post. Browser APIs cannot auto-attach images
+  // to share URLs — this is a platform limitation (WhatsApp, FB, IG, etc.
+  // all require manual image upload).
+  let imageSaved = false
+  if (imageData) {
+    try {
+      // Dynamically import Tauri invoke — only works in desktop context
+      const { invoke } = await import('@tauri-apps/api/core')
+      const filename = await invoke<string>('save_base64_image', {
+        base64Data: imageData,
+        formatType: 'thumbnail',
+      })
+      console.log('[share] Image saved for manual attachment:', filename)
+      imageSaved = true
+    } catch (err) {
+      console.warn('[share] Could not save image:', err)
+    }
+  }
+
   switch (platform) {
     case 'whatsapp':
       url = `https://wa.me/?text=${encoded}`
       break
     case 'facebook':
-      // Facebook deprecated the `quote` parameter in sharer.php. Opening
-      // sharer.php?quote=... shows an EMPTY share dialog. Instead, we:
-      // 1. Copy the caption to clipboard so the user can paste it
-      // 2. Open Facebook's home page (where they can create a post)
-      // 3. Alert the user to paste (Ctrl+V) in the post composer
       try {
         await navigator.clipboard.writeText(text)
       } catch {
-        // Clipboard might fail in some contexts — alert with manual copy
+        // Clipboard might fail in some contexts
       }
       url = 'https://www.facebook.com/'
-      // Show alert BEFORE opening the URL so the user knows to paste
-      alert('Facebook caption copied to clipboard!\n\nFacebook no longer allows pre-filling posts via links. When Facebook opens, click "Create Post" and press Ctrl+V to paste your caption.')
+      const fbMsg = 'Facebook caption copied to clipboard!\n\nWhen Facebook opens, click "Create Post" and press Ctrl+V to paste.'
+      if (imageSaved) fbMsg + '\n\n📷 Product image saved to your app folder — attach it manually to the post.'
+      alert(fbMsg)
       await openExternalUrl(url)
       return true
     case 'twitter/x':
@@ -142,7 +166,9 @@ export async function shareToPlatform(platform: SharePlatform, text: string): Pr
     case 'instagram':
       try {
         await navigator.clipboard.writeText(text)
-        alert('Instagram caption copied to clipboard! Paste it in Instagram to share.')
+        const igMsg = 'Instagram caption copied to clipboard! Paste it in Instagram to share.'
+        if (imageSaved) igMsg + '\n\n📷 Product image saved to your app folder — attach it manually.'
+        alert(igMsg)
       } catch {
         alert('Could not copy to clipboard. Please copy manually:\n\n' + text)
       }

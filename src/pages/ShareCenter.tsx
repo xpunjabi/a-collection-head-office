@@ -254,23 +254,32 @@ Product Details:
 - Name: ${product.name}
 - SKU: ${product.sku}
 - Category: ${product.category || 'Clothing'}
-- Price: Rs. ${product.sale_price.toFixed(0)}
+- Sale Price: Rs. ${product.sale_price.toFixed(0)}
+- Retail Price: Rs. ${(product as any).retail_price?.toFixed(0) || (product.sale_price * 1.2).toFixed(0)}
 - Description: ${product.description || 'Premium quality'}
 - Tags: ${product.tags || ''}
+
+IMPORTANT RULES FOR ALL CAPTIONS:
+1. Start with the SALE PRICE prominently (e.g., "Sirf Rs. 2500 mein!")
+2. If Retail Price > Sale Price, mention it as crossed out (e.g., "~~Rs. 3000~~ Rs. 2500")
+3. Be AGGRESSIVE and persuasive — create urgency, excitement, FOMO
+4. Include local area hashtags: #Narowal #Zafarwal #Shakargarh #NarowalFashion
+5. Write in Hinglish (Roman Urdu + English)
+6. Target: Narowal district women/girls age 10-50
 
 Generate marketing content for ALL 5 platforms in ONE response. Return ONLY valid JSON (no markdown, no code blocks, no explanation). Use this exact structure:
 
 {
-  "whatsapp_status": "2-3 line friendly WhatsApp Status. Personal tone. Include price + 'WhatsApp us to order'. 1-2 emojis max.",
-  "whatsapp_direct": "2 line punchy direct pitch. Product name + price + 'DM to order'.",
-  "facebook": "3-5 line Facebook post. Trust-building. Include product details, price, location (Narowal), WhatsApp contact. 1-2 hashtags. A few emojis.",
-  "instagram": "3-5 line trendy Instagram caption. Emoji-rich, line breaks. Product story + price + CTA. 5-8 hashtags including #NarowalFashion #PakistaniLawn.",
-  "tiktok": "2-3 line TikTok caption. Hook-driven, casual, Gen-Z tone. MUST include #fyp #foryou + 2-3 fashion hashtags.",
-  "hashtags": ["#hashtag1", "#hashtag2", "..."],
-  "cta": "Short call-to-action for all platforms"
+  "whatsapp_status": "2-3 line aggressive WhatsApp Status. Start with sale price. Create urgency. 1-2 emojis.",
+  "whatsapp_direct": "2 line punchy direct pitch. Sale price first. 'DM to order NOW'.",
+  "facebook": "3-5 line aggressive Facebook post. Sale price prominent, retail crossed out. Include Narowal/Zafarwal/Shakargarh hashtags. Emojis.",
+  "instagram": "3-5 line trendy Instagram caption. Sale price first. 5-8 hashtags including #NarowalFashion #NarowalLawn #Zafarwal #Shakargarh.",
+  "tiktok": "2-3 line hook-driven TikTok caption. MUST include #fyp #foryou #NarowalFashion #Zafarwal.",
+  "hashtags": ["#NarowalFashion", "#NarowalLawn", "#Zafarwal", "#Shakargarh", "#fyp"],
+  "cta": "Short aggressive call-to-action"
 }
 
-Write in Hinglish (Roman Urdu + English where necessary). Target audience: Narowal district women/girls age 10-50. Return ONLY the JSON.`
+Write in Hinglish (Roman Urdu + English). Return ONLY the JSON.`
 
     try {
       const response: any = await invoke('ask_ai', { prompt })
@@ -374,8 +383,22 @@ Write in Hinglish (Roman Urdu + English where necessary). Target audience: Narow
       return
     }
     const sharePlatform = PLATFORM_SHARE_MAP[platformId] || 'whatsapp'
+
+    // v0.13.4: Get product image for sharing (if available)
+    let imageData: string | null = null
+    if (selectedProduct) {
+      try {
+        const images = JSON.parse(selectedProduct.images || '[]')
+        if (images.length > 0 && images[0]) {
+          imageData = await invoke<string>('get_image_as_base64', { filename: images[0] })
+        }
+      } catch (err) {
+        console.warn('[Share] Could not load product image:', err)
+      }
+    }
+
     try {
-      await shareToPlatform(sharePlatform, caption)
+      await shareToPlatform(sharePlatform, caption, imageData)
       // Log the share
       await invoke('log_share', {
         productId: selectedProductId || null,
