@@ -578,31 +578,26 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
         color: None,
         design: draft.brand.clone(),
         season: None,
-        cost_price: 0.0,
-        sale_price: 0.0,
-        purchase_price: 0.0,
+        // v0.13.8: Save actual prices from draft (was hardcoded to 0.0)
+        cost_price: draft.cost_price.unwrap_or(0.0),
+        sale_price: draft.sale_price.unwrap_or(0.0),
+        purchase_price: draft.cost_price.unwrap_or(0.0),
         description: draft.notes.clone(),
         tags: if tags.is_empty() { None } else { Some(tags.join(", ")) },
         stock_quantity: 0,
         status: "active".to_string(),
-        // Persist the web image (best_image_url) that was downloaded before
-        // the DB lock was acquired. Previously this was hardcoded as "[]"
-        // which silently discarded the web image the user saw in the draft
-        // card — saving the product with NO image at all.
         images: images_json,
         supplier_id: None,
         created_at: now.clone(),
         updated_at: now,
-        // v0.11.0+ profit-mode fields — default to None for AI-generated
-        // catalog drafts. These get populated when a purchase trip item is
-        // linked or when stock is sent to an agent.
         product_code: None,
         brand: draft.brand.clone(),
         fabric: draft.fabric.clone(),
         size_info: None,
-        base_unit_cost: None,
+        base_unit_cost: draft.cost_price,
         landed_unit_cost: None,
-        retail_price: None,
+        // v0.13.8: Save retail_price from draft (was hardcoded to None)
+        retail_price: draft.retail_price,
         discount_price: None,
         source_trip_id: None,
         qty_in_head_office: None,

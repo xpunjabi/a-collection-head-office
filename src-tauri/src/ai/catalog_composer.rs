@@ -12,6 +12,14 @@ pub struct CatalogDraft {
     pub web_evidence_count: Option<usize>,
     pub web_evidence_snippets: Option<Vec<String>>,
     pub best_image_url: Option<String>,
+    // v0.13.8: Price fields added so user can edit them in the draft
+    // before saving to catalog. Previously these were hardcoded to 0.
+    #[serde(default)]
+    pub cost_price: Option<f64>,
+    #[serde(default)]
+    pub retail_price: Option<f64>,
+    #[serde(default)]
+    pub sale_price: Option<f64>,
 }
 
 pub async fn generate_catalog_draft(

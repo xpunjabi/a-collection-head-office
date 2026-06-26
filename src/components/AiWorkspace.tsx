@@ -75,7 +75,7 @@ export default function AiWorkspace() {
   const [savingIndex, setSavingIndex] = useState<number | null>(null)
   const [generatingIndex, setGeneratingIndex] = useState<number | null>(null)
   const [editingDraftIndex, setEditingDraftIndex] = useState<number | null>(null)
-  const [draftEdits, setDraftEdits] = useState<Record<number, { title: string; brand: string; fabric: string; design_code: string; notes: string }>>({})
+  const [draftEdits, setDraftEdits] = useState<Record<number, { title: string; brand: string; fabric: string; design_code: string; notes: string; cost_price: string; retail_price: string; sale_price: string }>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -407,6 +407,9 @@ export default function AiWorkspace() {
                         fabric: msg.fast_path_data.data.fabric || '',
                         design_code: msg.fast_path_data.data.design_code || '',
                         notes: msg.fast_path_data.data.notes || '',
+                        cost_price: String(msg.fast_path_data.data.cost_price ?? ''),
+                        retail_price: String(msg.fast_path_data.data.retail_price ?? ''),
+                        sale_price: String(msg.fast_path_data.data.sale_price ?? ''),
                       }
                       const setField = (field: string, value: string) => {
                         setDraftEdits(prev => ({ ...prev, [i]: { ...edit, [field]: value } }))
@@ -418,6 +421,9 @@ export default function AiWorkspace() {
                         msg.fast_path_data.data.fabric = draftEdits[i].fabric || undefined
                         msg.fast_path_data.data.design_code = draftEdits[i].design_code || undefined
                         msg.fast_path_data.data.notes = draftEdits[i].notes || undefined
+                        msg.fast_path_data.data.cost_price = draftEdits[i].cost_price ? Number(draftEdits[i].cost_price) : undefined
+                        msg.fast_path_data.data.retail_price = draftEdits[i].retail_price ? Number(draftEdits[i].retail_price) : undefined
+                        msg.fast_path_data.data.sale_price = draftEdits[i].sale_price ? Number(draftEdits[i].sale_price) : undefined
                       }
                       return (
                         <>
@@ -476,6 +482,43 @@ export default function AiWorkspace() {
                         </>
                       )
                     })()}
+                    {/* v0.13.8: Price fields in draft (editable) */}
+                    {editingDraftIndex === i && (
+                      <div className="grid grid-cols-3 gap-2 mt-1">
+                        <div>
+                          <label className="text-[10px] text-gray-500">Cost (Rs)</label>
+                          <input type="number" step="1" value={draftEdits[i]?.cost_price ?? ''} onChange={e => {
+                            const edit = draftEdits[i] || { title: msg.fast_path_data!.data.title, brand: '', fabric: '', design_code: '', notes: '', cost_price: '', retail_price: '', sale_price: '' }
+                            setDraftEdits(prev => ({ ...prev, [i]: { ...edit, cost_price: e.target.value } }))
+                          }}
+                            className="w-full bg-slate-950 border border-violet-500/30 rounded px-1 py-0.5 text-xs text-gray-200" placeholder="0" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-500">Retail (Rs)</label>
+                          <input type="number" step="1" value={draftEdits[i]?.retail_price ?? ''} onChange={e => {
+                            const edit = draftEdits[i] || { title: msg.fast_path_data!.data.title, brand: '', fabric: '', design_code: '', notes: '', cost_price: '', retail_price: '', sale_price: '' }
+                            setDraftEdits(prev => ({ ...prev, [i]: { ...edit, retail_price: e.target.value } }))
+                          }}
+                            className="w-full bg-slate-950 border border-violet-500/30 rounded px-1 py-0.5 text-xs text-gray-200" placeholder="0" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-500">Sale (Rs)</label>
+                          <input type="number" step="1" value={draftEdits[i]?.sale_price ?? ''} onChange={e => {
+                            const edit = draftEdits[i] || { title: msg.fast_path_data!.data.title, brand: '', fabric: '', design_code: '', notes: '', cost_price: '', retail_price: '', sale_price: '' }
+                            setDraftEdits(prev => ({ ...prev, [i]: { ...edit, sale_price: e.target.value } }))
+                          }}
+                            className="w-full bg-slate-950 border border-violet-500/30 rounded px-1 py-0.5 text-xs text-gray-200" placeholder="0" />
+                        </div>
+                      </div>
+                    )}
+                    {/* Show prices when not editing (if they exist) */}
+                    {editingDraftIndex !== i && (msg.fast_path_data.data.cost_price || msg.fast_path_data.data.sale_price) && (
+                      <div className="flex space-x-3 text-xs mt-1">
+                        {msg.fast_path_data.data.cost_price && <span className="text-gray-400">Cost: Rs. {msg.fast_path_data.data.cost_price.toFixed(0)}</span>}
+                        {msg.fast_path_data.data.retail_price && <span className="text-gray-500 line-through">Rs. {msg.fast_path_data.data.retail_price.toFixed(0)}</span>}
+                        {msg.fast_path_data.data.sale_price && <span className="text-violet-400 font-bold">Rs. {msg.fast_path_data.data.sale_price.toFixed(0)}</span>}
+                      </div>
+                    )}
                     {msg.fast_path_data.data.web_evidence_count && (
                       <div className="text-cyan-400/80 text-[10px] mt-1.5 border-t border-violet-800/30 pt-1">
                         Web Evidence: Found {msg.fast_path_data.data.web_evidence_count} matching result{msg.fast_path_data.data.web_evidence_count !== 1 ? 's' : ''} from internet search

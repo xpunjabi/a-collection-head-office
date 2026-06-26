@@ -143,6 +143,10 @@ export interface CatalogDraft {
   web_evidence_count?: number;
   web_evidence_snippets?: string[];
   best_image_url?: string;
+  // v0.13.8: Price fields for Edit Draft
+  cost_price?: number;
+  retail_price?: number;
+  sale_price?: number;
 }
 
 export type AssistantResult =
