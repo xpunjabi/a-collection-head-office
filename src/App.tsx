@@ -2,7 +2,6 @@ import { useAppStore } from './stores/store'
 import {
   LayoutDashboard,
   BookOpen,
-  Share2,
   Users,
   Package,
   Bot,
@@ -18,7 +17,6 @@ import {
 
 import Dashboard from './pages/Dashboard'
 import Catalog from './pages/Catalog'
-import SocialHub from './pages/SocialHub'
 import Customers from './pages/Customers'
 import Inventory from './pages/Inventory'
 import Automation from './pages/Automation'
@@ -29,18 +27,13 @@ import ShareCenter from './pages/ShareCenter'
 import PurchaseTripsPage from './pages/PurchaseTrips'
 import AiWorkspace from './components/AiWorkspace'
 
-// v0.12.4: Locations tab hidden — Agents table replaces it (single source of
-// truth for person + place). LocationsPage is still imported so the module
-// isn't dead-code-eliminated, but it's not reachable from the UI. The
-// sync_locations_to_agents migration still runs on startup to migrate any
-// legacy location data into the agents table.
-// import LocationsPage from './pages/Locations'
+// v0.13.1: SocialHub.tsx DELETED — merged into ShareCenter.
+// Locations tab also removed (agents table replaces it).
 
 const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'catalog', label: 'Catalog', icon: BookOpen },
   { id: 'share_center', label: 'Share Center', icon: Megaphone },
-  { id: 'social', label: 'Social Hub', icon: Share2 },
   { id: 'customers', label: 'Customers', icon: Users },
   { id: 'inventory', label: 'Inventory', icon: Package },
   { id: 'agents', label: 'Agents', icon: UserCircle },
@@ -64,7 +57,6 @@ function App() {
       case 'dashboard': return <Dashboard />
       case 'catalog': return <Catalog />
       case 'share_center': return <ShareCenter />
-      case 'social': return <SocialHub />
       case 'customers': return <Customers />
       case 'inventory': return <Inventory />
       case 'automation': return <Automation />

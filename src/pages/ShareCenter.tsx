@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { useAppStore, Product } from '../stores/store'
+import { useAppStore } from '../stores/store'
 import {
-  Share2, MessageCircle, Facebook, Instagram, Twitter, Copy, Check,
-  AlertTriangle, RefreshCw, Sparkle, Send
+  Share2, MessageCircle, Facebook, Instagram, Copy, Check,
+  AlertTriangle, RefreshCw, Sparkle, Send, Save, Trash2, Brain,
+  Edit3, Hash
 } from 'lucide-react'
 import {
-  shareToPlatform, buildProductShareText,
+  shareToPlatform,
   SharePlatform
 } from '../utils/share'
 
+// Types
 interface ShareLog {
   id: number
   product_id: number | null
@@ -40,6 +42,16 @@ interface SegmentCustomer {
   segment: string
 }
 
+interface SocialDraft {
+  id: string;
+  productId?: number;
+  productName?: string;
+  content: string;
+  platform: string;
+  angle: string;
+  created_at: string;
+}
+
 type ShareAngle = 'new_arrival' | 'discount' | 'premium' | 'budget' | 'limited_stock'
 
 const SHARE_ANGLES: { id: ShareAngle; label: string; hint: string }[] = [
@@ -50,42 +62,64 @@ const SHARE_ANGLES: { id: ShareAngle; label: string; hint: string }[] = [
   { id: 'limited_stock', label: 'Limited Stock', hint: 'Only a few left' },
 ]
 
-const PLATFORM_ICONS: Record<SharePlatform, typeof MessageCircle> = {
-  'whatsapp': MessageCircle,
-  'facebook': Facebook,
-  'instagram': Instagram,
-  'twitter/x': Twitter,
-}
+// All platforms — unified list, no duplicates
+const PLATFORMS = [
+  { id: 'whatsapp_status', label: 'WhatsApp Status', icon: MessageCircle, color: 'text-emerald-400' },
+  { id: 'whatsapp_direct', label: 'WhatsApp Direct', icon: MessageCircle, color: 'text-emerald-400' },
+  { id: 'facebook', label: 'Facebook', icon: Facebook, color: 'text-blue-400' },
+  { id: 'instagram', label: 'Instagram', icon: Instagram, color: 'text-pink-400' },
+  { id: 'tiktok', label: 'TikTok', icon: Hash, color: 'text-sky-400' },
+] as const
 
-const PLATFORM_COLORS: Record<SharePlatform, string> = {
-  'whatsapp': 'text-emerald-400',
-  'facebook': 'text-blue-400',
-  'instagram': 'text-pink-400',
-  'twitter/x': 'text-sky-400',
+// Map platform_id to SharePlatform for shareToPlatform()
+const PLATFORM_SHARE_MAP: Record<string, SharePlatform> = {
+  'whatsapp_status': 'whatsapp',
+  'whatsapp_direct': 'whatsapp',
+  'facebook': 'facebook',
+  'instagram': 'instagram',
+  'tiktok': 'twitter/x',
 }
 
 export default function ShareCenter() {
-  const { products, fetchProducts } = useAppStore()
+  const { products, fetchProducts, updateSetting } = useAppStore()
   const [selectedProductId, setSelectedProductId] = useState<number | ''>('')
   const [shareAngle, setShareAngle] = useState<ShareAngle>('new_arrival')
-  const [generatedCaptions, setGeneratedCaptions] = useState<Record<string, string>>({})
   const [isGenerating, setIsGenerating] = useState(false)
+  const [generatingPlatform, setGeneratingPlatform] = useState<string | null>(null)
+
+  // Caption state — editable per platform
+  const [captions, setCaptions] = useState<Record<string, string>>({})
+  const [editingPlatform, setEditingPlatform] = useState<string | null>(null)
   const [copiedPlatform, setCopiedPlatform] = useState<string | null>(null)
+
+  // Drafts
+  const [drafts, setDrafts] = useState<SocialDraft[]>([])
+
+  // Share logs
   const [shareLogs, setShareLogs] = useState<ShareLog[]>([])
+
+  // Stale stock
   const [staleProducts, setStaleProducts] = useState<StaleProduct[]>([])
+
+  // Segments + bulk broadcast
   const [segments, setSegments] = useState<string[]>([])
   const [selectedSegment, setSelectedSegment] = useState<string>('')
   const [segmentCustomers, setSegmentCustomers] = useState<SegmentCustomer[]>([])
   const [bulkBroadcastText, setBulkBroadcastText] = useState('')
   const [bulkBroadcastLoading, setBulkBroadcastLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<'share_pack' | 'broadcast' | 'stale' | 'history'>('share_pack')
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'share_pack' | 'drafts' | 'broadcast' | 'stale' | 'history'>('share_pack')
 
   useEffect(() => {
     fetchProducts()
     loadShareLogs()
     loadStaleProducts()
     loadSegments()
+    loadDrafts()
   }, [])
+
+  // === DATA LOADERS ===
 
   const loadShareLogs = async () => {
     try {
@@ -104,7 +138,6 @@ export default function ShareCenter() {
   const loadSegments = async () => {
     try {
       const segs: string[] = await invoke('get_customer_segments')
-      // Always include default segments even if no customers have them yet
       const defaults = ['women', 'girls', 'vip', 'agent', 'general']
       const all = Array.from(new Set([...defaults, ...segs])).sort()
       setSegments(all)
@@ -123,82 +156,127 @@ export default function ShareCenter() {
     }
   }
 
+  const loadDrafts = async () => {
+    try {
+      const allSettings: Record<string, string> = await invoke('get_settings')
+      if (allSettings.social_drafts) {
+        setDrafts(JSON.parse(allSettings.social_drafts))
+      }
+    } catch (err) { console.error('Failed to load drafts:', err) }
+  }
+
+  const saveDraftsList = async (newList: SocialDraft[]) => {
+    try {
+      await updateSetting('social_drafts', JSON.stringify(newList))
+      setDrafts(newList)
+    } catch (err) {
+      alert(`Failed to save draft: ${err}`)
+    }
+  }
+
+  // === AI CAPTION GENERATION ===
+
   const selectedProduct = products.find(p => p.id === selectedProductId)
 
-  const handleGenerateSharePack = async () => {
+  const handleGenerateCaption = async (platformId: string) => {
     if (!selectedProductId) {
       alert('Please select a product first.')
       return
     }
+    const product = selectedProduct!
     setIsGenerating(true)
-    setGeneratedCaptions({})
+    setGeneratingPlatform(platformId)
+
+    const angleText: Record<ShareAngle, string> = {
+      new_arrival: 'This is a NEW ARRIVAL — emphasize freshness and being the first to get it.',
+      discount: 'This is a DISCOUNT post — emphasize the price drop and urgency.',
+      premium: 'This is a PREMIUM product — emphasize quality, luxury, and exclusivity.',
+      budget: 'This is a BUDGET-FRIENDLY pick — emphasize value for money and affordability.',
+      limited_stock: 'This is a LIMITED STOCK alert — emphasize scarcity and urgency to buy now.',
+    }
+
+    const platformPrompts: Record<string, string> = {
+      'whatsapp_status': `Write a SHORT WhatsApp Status message (2-3 lines max). Friendly, personal tone. Include product name, price (Rs. ${product.sale_price.toFixed(0)}), and a simple "WhatsApp us to order" prompt. Use 1-2 emojis max.`,
+      'whatsapp_direct': `Write a SHORT direct WhatsApp pitch message (2 lines max). Punchy, direct. Product name + price + "DM to order".`,
+      'facebook': `Write an engaging Facebook post (3-5 lines). Trust-building tone. Include product details, price (Rs. ${product.sale_price.toFixed(0)}), location (Narowal), and WhatsApp contact. Add 1-2 hashtags at the end. Use a few emojis.`,
+      'instagram': `Write a trendy Instagram caption (3-5 lines). Modern, emoji-rich, with line breaks for readability. Include product story + price + CTA. Add 5-8 relevant hashtags at the bottom including #NarowalFashion #PakistaniLawn.`,
+      'tiktok': `Write a short TikTok caption (2-3 lines max). Hook-driven, casual, Gen-Z friendly tone. MUST include #fyp and #foryou plus 2-3 fashion hashtags.`,
+    }
+
+    const prompt = `${angleText[shareAngle]}
+
+Product Details:
+- Name: ${product.name}
+- SKU: ${product.sku}
+- Category: ${product.category || 'Clothing'}
+- Price: Rs. ${product.sale_price.toFixed(0)}
+- Description: ${product.description || 'Premium quality'}
+- Tags: ${product.tags || ''}
+
+${platformPrompts[platformId]}
+
+Write in attractive Roman Urdu or English. Return ONLY the post text — no explanations, no preamble.`
+
     try {
-      const product = selectedProduct!
-      // Generate captions for each platform using buildProductShareText
-      // (local, fast, no API call). Future: enhance with AI per-platform.
-      const baseText = buildProductShareText({
-        name: product.name,
-        design: product.design,
-        salePrice: product.sale_price,
-        retailPrice: (product as Product & { retail_price?: number }).retail_price ?? null,
-        description: product.description,
-      })
-
-      const anglePrefix: Record<ShareAngle, string> = {
-        new_arrival: '🆕 New Arrival! ',
-        discount: '🔥 Special Discount! ',
-        premium: '✨ Premium Collection. ',
-        budget: '💰 Budget-Friendly Pick. ',
-        limited_stock: '⚠️ Limited Stock Alert! ',
-      }
-
-      const captions: Record<string, string> = {}
-      // WhatsApp Status: short, friendly
-      captions['whatsapp_status'] = `${anglePrefix[shareAngle]}${baseText}\n\nFor order, WhatsApp us! 📲`
-      // WhatsApp Direct: even shorter, pitch-style
-      captions['whatsapp_direct'] = `${anglePrefix[shareAngle]}${product.name} — Rs. ${product.sale_price.toFixed(0)}\nDM to order now!`
-      // Facebook: longer, trust-building
-      captions['facebook'] = `${anglePrefix[shareAngle]}\n\n${baseText}\n\n📍 Available at A Collection, Narowal\n💬 WhatsApp: +92 300 1234567\n🚚 Same-day delivery in Narowal\n\n#ACollection #NarowalFashion`
-      // Instagram: trendy, emojis, hashtags
-      captions['instagram'] = `${anglePrefix[shareAngle]}\n\n${baseText}\n\n.\n.\n.\n#NarowalFashion #NarowalLawn #PakistaniLawn #LawnCollection #instafashion #ootd #reelvsfeed #ACollection`
-      // TikTok: hook-driven, short
-      captions['tiktok'] = `${anglePrefix[shareAngle]}${product.name} — Rs. ${product.sale_price.toFixed(0)} 💸\n\n#fyp #foryou #pakistanifashion #lawn`
-
-      setGeneratedCaptions(captions)
+      const response: any = await invoke('ask_ai', { prompt })
+      const text = response.text || response || ''
+      setCaptions(prev => ({ ...prev, [platformId]: text }))
     } catch (err) {
-      alert(`Failed to generate captions: ${err}`)
+      alert(`AI Generation failed: ${err}`)
     } finally {
       setIsGenerating(false)
+      setGeneratingPlatform(null)
     }
   }
 
-  const handleCopyCaption = async (platform: string, text: string) => {
+  const handleGenerateAll = async () => {
+    if (!selectedProductId) {
+      alert('Please select a product first.')
+      return
+    }
+    // Generate all 5 platforms sequentially (to avoid API rate limits)
+    for (const p of PLATFORMS) {
+      await handleGenerateCaption(p.id)
+    }
+  }
+
+  // === CAPTION EDITING ===
+
+  const handleEditCaption = (platformId: string) => {
+    setEditingPlatform(editingPlatform === platformId ? null : platformId)
+  }
+
+  const handleCaptionChange = (platformId: string, text: string) => {
+    setCaptions(prev => ({ ...prev, [platformId]: text }))
+  }
+
+  const handleCopyCaption = async (platformId: string) => {
+    const text = captions[platformId]
+    if (!text) return
     try {
       await navigator.clipboard.writeText(text)
-      setCopiedPlatform(platform)
+      setCopiedPlatform(platformId)
       setTimeout(() => setCopiedPlatform(null), 2000)
     } catch (err) {
       alert(`Copy failed: ${err}`)
     }
   }
 
-  const handleShare = async (platform: SharePlatform, caption: string) => {
-    if (!selectedProductId) return
-    // Map platform key to share.ts platform
-    const platformMap: Record<string, SharePlatform> = {
-      'whatsapp_status': 'whatsapp',
-      'whatsapp_direct': 'whatsapp',
-      'facebook': 'facebook',
-      'instagram': 'instagram',
-      'tiktok': 'twitter/x', // TikTok has no web share URL — use Twitter as fallback (or just copy)
+  // === SHARING ===
+
+  const handleShare = async (platformId: string) => {
+    const caption = captions[platformId]
+    if (!caption) {
+      alert('Generate a caption first.')
+      return
     }
-    const sharePlatform = platformMap[platform] || 'whatsapp'
+    const sharePlatform = PLATFORM_SHARE_MAP[platformId] || 'whatsapp'
     try {
       await shareToPlatform(sharePlatform, caption)
       // Log the share
       await invoke('log_share', {
-        productId: selectedProductId,
-        platform,
+        productId: selectedProductId || null,
+        platform: platformId,
         shareAngle,
         captionText: caption,
         notes: null,
@@ -211,57 +289,90 @@ export default function ShareCenter() {
     }
   }
 
+  // === DRAFTS ===
+
+  const handleSaveDraft = async () => {
+    const generatedCaptions = Object.entries(captions).filter(([_, text]) => text && text.trim())
+    if (generatedCaptions.length === 0) {
+      alert('No captions to save. Generate at least one first.')
+      return
+    }
+    const product = selectedProduct
+    for (const [platform, content] of generatedCaptions) {
+      const newDraft: SocialDraft = {
+        id: String(Date.now()) + '-' + platform,
+        productId: product?.id,
+        productName: product?.name || 'Unknown',
+        content,
+        platform,
+        angle: shareAngle,
+        created_at: new Date().toLocaleString(),
+      }
+      const updated = [newDraft, ...drafts]
+      await saveDraftsList(updated)
+    }
+    alert(`${generatedCaptions.length} draft(s) saved!`)
+  }
+
+  const handleDeleteDraft = async (id: string) => {
+    const updated = drafts.filter(d => d.id !== id)
+    await saveDraftsList(updated)
+  }
+
+  const handleLoadDraft = (draft: SocialDraft) => {
+    setCaptions({ [draft.platform]: draft.content })
+    if (draft.productId) setSelectedProductId(draft.productId)
+    setShareAngle((draft.angle as ShareAngle) || 'new_arrival')
+    setActiveTab('share_pack')
+  }
+
+  // === TEACH AI ===
+
+  const handleTeachAI = async () => {
+    const allCaptions = Object.values(captions).filter(c => c && c.trim()).join('\n\n---\n\n')
+    if (!allCaptions) {
+      alert('No captions to teach.')
+      return
+    }
+    try {
+      await invoke('save_knowledge', {
+        topic: `Post Style - ${selectedProduct?.name || 'General'}`,
+        content: allCaptions,
+        source: 'share-center',
+      })
+      alert('Saved to AI Knowledge! The AI will learn from this style in future.')
+    } catch (err) {
+      alert(`Failed to save: ${err}`)
+    }
+  }
+
+  // === BULK BROADCAST ===
+
   const handleBulkBroadcast = async () => {
-    if (!selectedSegment) {
-      alert('Please select a customer segment first.')
-      return
-    }
-    if (!bulkBroadcastText.trim()) {
-      alert('Please enter broadcast message text.')
-      return
-    }
-    if (segmentCustomers.length === 0) {
-      alert('No customers in this segment. Add customers first.')
-      return
-    }
+    if (!selectedSegment) { alert('Select a customer segment first.'); return }
+    if (!bulkBroadcastText.trim()) { alert('Enter broadcast message.'); return }
+    if (segmentCustomers.length === 0) { alert('No customers in this segment.'); return }
     setBulkBroadcastLoading(true)
     try {
-      // For each customer with a phone number, open WhatsApp with their
-      // number and the broadcast text. We open them sequentially with a
-      // small delay to avoid overwhelming the browser.
       const customersWithPhone = segmentCustomers.filter(c => c.phone && c.phone.trim())
       if (customersWithPhone.length === 0) {
-        alert('No customers in this segment have phone numbers. Add phone numbers in Customers page.')
+        alert('No customers in this segment have phone numbers.')
         setBulkBroadcastLoading(false)
         return
       }
-
-      const confirmed = confirm(
-        `This will open ${customersWithPhone.length} WhatsApp chat windows (one per customer). Continue?`
-      )
-      if (!confirmed) {
-        setBulkBroadcastLoading(false)
-        return
-      }
-
-      // Sanitize phone: remove +, spaces, dashes (used for validation)
-      const sanitize = (p: string) => p.replace(/[^0-9]/g, '')
+      const confirmed = confirm(`This will open ${customersWithPhone.length} WhatsApp chat windows. Continue?`)
+      if (!confirmed) { setBulkBroadcastLoading(false); return }
 
       for (const c of customersWithPhone) {
-        const phone = sanitize(c.phone!)
+        const phone = c.phone!.replace(/[^0-9]/g, '')
         if (phone.length < 10) continue
-        // Open WhatsApp chat with this customer's phone number and the
-        // broadcast text pre-filled.
         try {
           await shareToPlatform('whatsapp', bulkBroadcastText)
-          // Small delay between opens to let browser handle each
           await new Promise(r => setTimeout(r, 500))
         } catch (err) {
-          console.error(`Failed to open WhatsApp for ${c.name}:`, err)
+          console.error(`Failed for ${c.name}:`, err)
         }
       }
-
-      // Log the broadcast
       await invoke('log_share', {
         productId: null,
         platform: 'whatsapp_direct',
@@ -270,7 +381,7 @@ export default function ShareCenter() {
         notes: `Bulk broadcast to segment: ${selectedSegment} (${customersWithPhone.length} customers)`,
       })
       await loadShareLogs()
-      alert(`Broadcast initiated for ${customersWithPhone.length} customers. Check your browser for opened WhatsApp tabs.`)
+      alert(`Broadcast initiated for ${customersWithPhone.length} customers.`)
     } catch (err) {
       alert(`Broadcast failed: ${err}`)
     } finally {
@@ -278,27 +389,30 @@ export default function ShareCenter() {
     }
   }
 
+  // === HELPERS ===
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+  const fmtMoney = (n: number) => `Rs. ${n.toFixed(0)}`
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-white font-display">Share Center</h1>
-        <p className="text-sm text-gray-400 mt-1">Aggressive social media sharing. Generate captions, broadcast to segments, track every share.</p>
+        <p className="text-sm text-gray-400 mt-1">AI-powered marketing. Generate, edit, save, share — all in one place.</p>
       </div>
 
       {/* Tab switcher */}
-      <div className="flex space-x-1 bg-slate-900/50 p-1 rounded-lg border border-gray-800 w-fit">
+      <div className="flex space-x-1 bg-slate-900/50 p-1 rounded-lg border border-gray-800 w-fit overflow-x-auto">
         {[
-          { id: 'share_pack', label: 'Share Pack', icon: Sparkle },
+          { id: 'share_pack', label: 'AI Share Pack', icon: Sparkle },
+          { id: 'drafts', label: `Drafts (${drafts.length})`, icon: Save },
           { id: 'broadcast', label: 'Bulk Broadcast', icon: Send },
-          { id: 'stale', label: `Stale Stock (${staleProducts.length})`, icon: AlertTriangle },
+          { id: 'stale', label: `Stale (${staleProducts.length})`, icon: AlertTriangle },
           { id: 'history', label: 'History', icon: RefreshCw },
         ].map(t => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id as any)}
-            className={`flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+            className={`flex items-center space-x-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
               activeTab === t.id ? 'bg-violet-600 text-white' : 'text-gray-400 hover:text-white'
             }`}
           >
@@ -308,33 +422,41 @@ export default function ShareCenter() {
         ))}
       </div>
 
-      {/* === SHARE PACK TAB === */}
+      {/* === AI SHARE PACK TAB === */}
       {activeTab === 'share_pack' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left: product + angle picker */}
           <div className="glass-card p-5 space-y-4">
-            <h2 className="text-lg font-semibold text-white">1. Select Product & Angle</h2>
+            <h2 className="text-lg font-semibold text-white">1. Select Product</h2>
             <div>
               <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Product *</label>
               <select
                 value={selectedProductId}
-                onChange={e => setSelectedProductId(e.target.value ? Number(e.target.value) : '')}
+                onChange={e => { setSelectedProductId(e.target.value ? Number(e.target.value) : ''); setCaptions({}) }}
                 className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
               >
                 <option value="">-- Select Product --</option>
                 {products.filter(p => p.status === 'active').map(p => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.sku}) — Rs. {p.sale_price.toFixed(0)}</option>
+                  <option key={p.id} value={p.id}>{p.name} ({p.sku}) — {fmtMoney(p.sale_price)}</option>
                 ))}
               </select>
             </div>
+            {selectedProduct && (
+              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 text-xs text-gray-400">
+                <div className="text-gray-300 font-semibold mb-1">{selectedProduct.name}</div>
+                <div>SKU: {selectedProduct.sku}</div>
+                <div>Price: {fmtMoney(selectedProduct.sale_price)}</div>
+                <div>HO Stock: {selectedProduct.qty_in_head_office ?? selectedProduct.stock_quantity}</div>
+              </div>
+            )}
             <div>
-              <label className="block text-xs font-semibold uppercase text-gray-400 mb-2">Share Angle</label>
-              <div className="grid grid-cols-1 gap-2">
+              <label className="block text-xs font-semibold uppercase text-gray-400 mb-2">Marketing Angle</label>
+              <div className="space-y-1">
                 {SHARE_ANGLES.map(a => (
                   <button
                     key={a.id}
                     onClick={() => setShareAngle(a.id)}
-                    className={`flex items-center justify-between p-2 rounded-lg border text-left text-xs transition-colors ${
+                    className={`w-full flex items-center justify-between p-2 rounded-lg border text-left text-xs transition-colors ${
                       shareAngle === a.id
                         ? 'bg-violet-600/20 border-violet-500 text-white'
                         : 'bg-slate-950 border-gray-800 text-gray-400 hover:border-violet-500/50'
@@ -350,67 +472,137 @@ export default function ShareCenter() {
               </div>
             </div>
             <button
-              onClick={handleGenerateSharePack}
+              onClick={handleGenerateAll}
               disabled={!selectedProductId || isGenerating}
               className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
             >
               <Sparkle size={14} />
-              <span>{isGenerating ? 'Generating...' : 'Generate Share Pack'}</span>
+              <span>{isGenerating ? 'AI Generating...' : 'Generate All (AI)'}</span>
             </button>
-            {selectedProduct && (
-              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 text-xs text-gray-400">
-                <div className="text-gray-300 font-semibold mb-1">{selectedProduct.name}</div>
-                <div>SKU: {selectedProduct.sku}</div>
-                <div>Price: Rs. {selectedProduct.sale_price.toFixed(0)}</div>
-                <div>Stock: {selectedProduct.stock_quantity} pcs</div>
-              </div>
-            )}
+            <div className="flex space-x-2">
+              <button
+                onClick={handleSaveDraft}
+                disabled={Object.keys(captions).length === 0}
+                className="flex-1 flex items-center justify-center space-x-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-gray-200 rounded-lg text-xs font-medium"
+              >
+                <Save size={12} /><span>Save Drafts</span>
+              </button>
+              <button
+                onClick={handleTeachAI}
+                disabled={Object.keys(captions).length === 0}
+                className="flex-1 flex items-center justify-center space-x-1 px-3 py-2 bg-amber-600/20 hover:bg-amber-600/40 disabled:opacity-50 text-amber-300 rounded-lg text-xs font-medium"
+              >
+                <Brain size={12} /><span>Teach AI</span>
+              </button>
+            </div>
           </div>
 
-          {/* Right: generated captions */}
-          <div className="glass-card p-5 space-y-3">
-            <h2 className="text-lg font-semibold text-white">2. Generated Captions</h2>
-            {Object.keys(generatedCaptions).length === 0 ? (
-              <div className="text-center py-12 text-gray-500 text-sm">
-                <Sparkle size={24} className="mx-auto mb-2 text-gray-700" />
-                Select a product and click "Generate Share Pack" to create captions for all 5 platforms.
-              </div>
-            ) : (
-              Object.entries(generatedCaptions).map(([platform, caption]) => {
-                const Icon = PLATFORM_ICONS[platform.split('_')[0] as SharePlatform] || Share2
-                const color = PLATFORM_COLORS[platform.split('_')[0] as SharePlatform] || 'text-gray-400'
-                return (
-                  <div key={platform} className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <Icon size={14} className={color} />
-                        <span className="text-xs font-semibold text-white capitalize">
-                          {platform.replace(/_/g, ' ')}
-                        </span>
-                      </div>
-                      <div className="flex items-center space-x-1">
-                        <button
-                          onClick={() => handleCopyCaption(platform, caption)}
-                          className="p-1 text-gray-500 hover:text-violet-400 transition-colors"
-                          title="Copy caption"
-                        >
-                          {copiedPlatform === platform ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                        </button>
-                        <button
-                          onClick={() => handleShare(platform as SharePlatform, caption)}
-                          className="flex items-center space-x-1 px-2 py-0.5 bg-violet-600/20 hover:bg-violet-600/40 text-violet-300 rounded text-[10px] font-medium transition-colors"
-                        >
-                          <Share2 size={10} />
-                          <span>Share</span>
-                        </button>
-                      </div>
+          {/* Right: generated captions (editable) */}
+          <div className="lg:col-span-2 glass-card p-5 space-y-3">
+            <h2 className="text-lg font-semibold text-white">2. AI-Generated Captions</h2>
+            <p className="text-xs text-gray-400">Each caption is AI-generated for the specific platform. Click Generate per platform or "Generate All". Edit any caption before sharing.</p>
+            {PLATFORMS.map(p => {
+              const caption = captions[p.id]
+              const isEditing = editingPlatform === p.id
+              const isThisGenerating = generatingPlatform === p.id
+              const Icon = p.icon
+              return (
+                <div key={p.id} className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Icon size={14} className={p.color} />
+                      <span className="text-xs font-semibold text-white">{p.label}</span>
+                      {caption && <Check size={10} className="text-emerald-400" />}
                     </div>
-                    <p className="text-xs text-gray-300 whitespace-pre-wrap bg-black/20 rounded p-2 max-h-32 overflow-y-auto">{caption}</p>
+                    <div className="flex items-center space-x-1">
+                      <button
+                        onClick={() => handleGenerateCaption(p.id)}
+                        disabled={isGenerating || !selectedProductId}
+                        className="flex items-center space-x-1 px-2 py-0.5 bg-violet-600/20 hover:bg-violet-600/40 disabled:opacity-30 text-violet-300 rounded text-[10px] font-medium"
+                      >
+                        <Sparkle size={8} />
+                        <span>{isThisGenerating ? '...' : 'AI'}</span>
+                      </button>
+                      {caption && (
+                        <>
+                          <button onClick={() => handleCopyCaption(p.id)} className="p-1 text-gray-500 hover:text-violet-400" title="Copy">
+                            {copiedPlatform === p.id ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
+                          </button>
+                          <button onClick={() => handleEditCaption(p.id)} className="p-1 text-gray-500 hover:text-violet-400" title="Edit">
+                            <Edit3 size={10} />
+                          </button>
+                          <button
+                            onClick={() => handleShare(p.id)}
+                            className="flex items-center space-x-1 px-2 py-0.5 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 rounded text-[10px] font-medium"
+                          >
+                            <Share2 size={8} /><span>Share</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                )
-              })
-            )}
+                  {caption ? (
+                    isEditing ? (
+                      <textarea
+                        value={caption}
+                        onChange={e => handleCaptionChange(p.id, e.target.value)}
+                        onBlur={() => setEditingPlatform(null)}
+                        rows={5}
+                        autoFocus
+                        className="w-full bg-black/30 border border-violet-500/30 rounded p-2 text-xs text-gray-200 focus:outline-none focus:border-violet-500"
+                      />
+                    ) : (
+                      <p className="text-xs text-gray-300 whitespace-pre-wrap bg-black/20 rounded p-2 max-h-32 overflow-y-auto">{caption}</p>
+                    )
+                  ) : (
+                    <p className="text-xs text-gray-600 italic py-2">Not generated yet. Click "AI" to generate.</p>
+                  )}
+                </div>
+              )
+            })}
           </div>
+        </div>
+      )}
+
+      {/* === DRAFTS TAB === */}
+      {activeTab === 'drafts' && (
+        <div className="space-y-4">
+          <div className="glass-card p-4">
+            <h2 className="text-lg font-semibold text-white">Saved Drafts</h2>
+            <p className="text-xs text-gray-400 mt-1">Load a draft to edit and share, or delete unwanted drafts.</p>
+          </div>
+          {drafts.length === 0 ? (
+            <div className="glass-card p-8 text-center text-gray-500 text-sm">
+              <Save size={24} className="mx-auto mb-2 text-gray-700" />
+              No drafts saved yet. Generate captions and click "Save Drafts".
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {drafts.map(d => (
+                <div key={d.id} className="glass-card p-3 border border-gray-800">
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">{d.productName}</h3>
+                      <p className="text-[10px] text-gray-500">{d.platform.replace(/_/g, ' ')} • {d.angle.replace(/_/g, ' ')}</p>
+                    </div>
+                    <button onClick={() => handleDeleteDraft(d.id)} className="p-1 text-gray-500 hover:text-red-400">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 line-clamp-3 mb-2">{d.content}</p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-600">{d.created_at}</span>
+                    <button
+                      onClick={() => handleLoadDraft(d)}
+                      className="text-[10px] px-2 py-0.5 bg-violet-600/20 hover:bg-violet-600/40 text-violet-300 rounded font-medium"
+                    >
+                      Load & Edit
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -419,16 +611,13 @@ export default function ShareCenter() {
         <div className="glass-card p-5 space-y-4 max-w-2xl">
           <div>
             <h2 className="text-lg font-semibold text-white">Bulk WhatsApp Broadcast</h2>
-            <p className="text-xs text-gray-400 mt-1">Send the same message to all customers in a segment. Opens WhatsApp for each customer with phone number.</p>
+            <p className="text-xs text-gray-400 mt-1">Send the same message to all customers in a segment. Opens WhatsApp for each customer.</p>
           </div>
           <div>
             <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Customer Segment</label>
             <select
               value={selectedSegment}
-              onChange={e => {
-                setSelectedSegment(e.target.value)
-                loadSegmentCustomers(e.target.value)
-              }}
+              onChange={e => { setSelectedSegment(e.target.value); loadSegmentCustomers(e.target.value) }}
               className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
             >
               <option value="">All Active Customers</option>
@@ -439,7 +628,6 @@ export default function ShareCenter() {
           </div>
           {selectedSegment && (
             <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 text-xs text-gray-400">
-              <div className="text-gray-300 font-semibold mb-1">Segment: {selectedSegment}</div>
               <div>Customers found: {segmentCustomers.length}</div>
               <div>With phone: {segmentCustomers.filter(c => c.phone && c.phone.trim()).length}</div>
             </div>
@@ -450,7 +638,7 @@ export default function ShareCenter() {
               value={bulkBroadcastText}
               onChange={e => setBulkBroadcastText(e.target.value)}
               rows={6}
-              placeholder="Type your broadcast message here. Example: &#10;&#10;🆕 New stock arrived! Lawn suits starting from Rs. 1500. DM to order. Same-day delivery in Narowal."
+              placeholder="Type your broadcast message here..."
               className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
             />
           </div>
@@ -462,9 +650,6 @@ export default function ShareCenter() {
             <Send size={14} />
             <span>{bulkBroadcastLoading ? 'Opening WhatsApp...' : 'Broadcast to Segment'}</span>
           </button>
-          <div className="bg-amber-950/30 border border-amber-800/40 rounded-lg p-3 text-xs text-amber-300">
-            <strong>Note:</strong> This opens one WhatsApp tab per customer. For large segments (50+ customers), use WhatsApp Business Desktop's broadcast list feature instead. The app logs every broadcast for tracking.
-          </div>
         </div>
       )}
 
@@ -477,7 +662,7 @@ export default function ShareCenter() {
                 <AlertTriangle size={16} className="text-amber-400 mr-2" />
                 Stale Stock — Not Shared in 7+ Days
               </h2>
-              <p className="text-xs text-gray-400 mt-1">Products with stock but no recent shares. Push these to social media to move inventory.</p>
+              <p className="text-xs text-gray-400 mt-1">Products with stock but no recent shares. Generate captions and push them.</p>
             </div>
             <button onClick={loadStaleProducts} className="p-2 text-gray-400 hover:text-violet-400">
               <RefreshCw size={14} />
@@ -486,7 +671,7 @@ export default function ShareCenter() {
           {staleProducts.length === 0 ? (
             <div className="glass-card p-8 text-center text-gray-500 text-sm">
               <Check size={24} className="mx-auto mb-2 text-emerald-400" />
-              All products have been shared recently. Great job!
+              All products have been shared recently!
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -495,7 +680,7 @@ export default function ShareCenter() {
                   <div className="flex items-start justify-between">
                     <div>
                       <h3 className="text-sm font-semibold text-white">{p.name}</h3>
-                      <p className="text-[10px] text-gray-500">{p.sku} • Rs. {p.sale_price.toFixed(0)}</p>
+                      <p className="text-[10px] text-gray-500">{p.sku} • {fmtMoney(p.sale_price)}</p>
                     </div>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300">
                       {p.stock_quantity} in stock
@@ -507,12 +692,13 @@ export default function ShareCenter() {
                   <button
                     onClick={() => {
                       setSelectedProductId(p.id)
+                      setCaptions({})
                       setActiveTab('share_pack')
                     }}
                     className="mt-2 w-full flex items-center justify-center space-x-1 px-2 py-1 bg-violet-600/20 hover:bg-violet-600/40 text-violet-300 rounded text-[10px] font-medium"
                   >
                     <Sparkle size={10} />
-                    <span>Create Share Pack</span>
+                    <span>Generate Captions</span>
                   </button>
                 </div>
               ))}
@@ -532,7 +718,7 @@ export default function ShareCenter() {
           </div>
           {shareLogs.length === 0 ? (
             <div className="glass-card p-8 text-center text-gray-500 text-sm">
-              No shares logged yet. Use the Share Pack tab to share products.
+              No shares logged yet. Use AI Share Pack to generate and share.
             </div>
           ) : (
             <div className="glass-card overflow-hidden">
