@@ -188,34 +188,45 @@ export default function ShareCenter() {
     setGeneratingPlatform(platformId)
 
     const angleText: Record<ShareAngle, string> = {
-      new_arrival: 'This is a NEW ARRIVAL — emphasize freshness and being the first to get it.',
-      discount: 'This is a DISCOUNT post — emphasize the price drop and urgency.',
-      premium: 'This is a PREMIUM product — emphasize quality, luxury, and exclusivity.',
-      budget: 'This is a BUDGET-FRIENDLY pick — emphasize value for money and affordability.',
-      limited_stock: 'This is a LIMITED STOCK alert — emphasize scarcity and urgency to buy now.',
+      new_arrival: 'NEW ARRIVAL — freshness, pehle hi haath lago!',
+      discount: 'DISCOUNT — price drop, urgency, limited time!',
+      premium: 'PREMIUM — quality, luxury, exclusivity!',
+      budget: 'BUDGET-FRIENDLY — value for money, affordability!',
+      limited_stock: 'LIMITED STOCK — scarcity, abhi kharid lo!',
     }
 
+    const retailPrice = (product as any).retail_price?.toFixed(0) || (product.sale_price * 1.2).toFixed(0)
+    const saveAmount = (parseFloat(retailPrice) - product.sale_price).toFixed(0)
+
     const platformPrompts: Record<string, string> = {
-      'whatsapp_status': `Write a SHORT WhatsApp Status message (2-3 lines max). Friendly, personal tone. Include product name, price (Rs. ${product.sale_price.toFixed(0)}), and a simple "WhatsApp us to order" prompt. Use 1-2 emojis max.`,
-      'whatsapp_direct': `Write a SHORT direct WhatsApp pitch message (2 lines max). Punchy, direct. Product name + price + "DM to order".`,
-      'facebook': `Write an engaging Facebook post (3-5 lines). Trust-building tone. Include product details, price (Rs. ${product.sale_price.toFixed(0)}), location (Narowal), and WhatsApp contact. Add 1-2 hashtags at the end. Use a few emojis.`,
-      'instagram': `Write a trendy Instagram caption (3-5 lines). Modern, emoji-rich, with line breaks for readability. Include product story + price + CTA. Add 5-8 relevant hashtags at the bottom including #NarowalFashion #PakistaniLawn.`,
-      'tiktok': `Write a short TikTok caption (2-3 lines max). Hook-driven, casual, Gen-Z friendly tone. MUST include #fyp and #foryou plus 2-3 fashion hashtags.`,
+      'whatsapp_status': `Short WhatsApp Status (2-3 lines). PRICE FIRST at top:
+🔥 SALE Rs. ${product.sale_price.toFixed(0)}
+~~Retail Rs. ${retailPrice}~~
+Save Rs. ${saveAmount}!
+Then 2 lines warm+urgent. One Punjabi phrase if natural. End with 'WhatsApp karein!'`,
+      'whatsapp_direct': `2 line punchy pitch. Price first line. 'Abhi DM karein!'`,
+      'facebook': `Facebook post (3-5 lines). PRICE BLOCK at top:
+🔥 SALE Rs. ${product.sale_price.toFixed(0)}
+~~Retail Rs. ${retailPrice}~~
+Save Rs. ${saveAmount}!
+Then emotional content. Address 'Girls ❤️' or 'Ladies ❤️'. Include #NarowalFashion #Zafarwal #Shakargarh. Emojis.`,
+      'instagram': `Instagram caption (3-5 lines). PRICE BLOCK first. Then trendy+emotional. Line breaks. 5-8 hashtags: #NarowalFashion #NarowalLawn #Zafarwal #Shakargarh #instafashion`,
+      'tiktok': `TikTok caption (2-3 lines). Price first. Hook-driven. MUST include #fyp #foryou #NarowalFashion #Zafarwal.`,
     }
 
     const prompt = `${angleText[shareAngle]}
 
-Product Details:
-- Name: ${product.name}
-- SKU: ${product.sku}
-- Category: ${product.category || 'Clothing'}
-- Price: Rs. ${product.sale_price.toFixed(0)}
-- Description: ${product.description || 'Premium quality'}
-- Tags: ${product.tags || ''}
+Product: ${product.name} (${product.sku})
+Category: ${product.category || 'Clothing'}
+Sale Price: Rs. ${product.sale_price.toFixed(0)}
+Retail Price: Rs. ${retailPrice}
+Description: ${product.description || ''}
+
+RULES: Price at top. Hinglish. Warm+emotional tone. One Punjabi phrase max. No 'Elegant/Beautiful/Premium' generic words. Target: Narowal women/girls 10-50.
 
 ${platformPrompts[platformId]}
 
-Write in Hinglish (Roman Urdu + English where necessary). Target audience: Narowal district women/girls age 10-50. Return ONLY the post text — no explanations, no preamble.`
+Return ONLY the post text.`
 
     try {
       const response: any = await invoke('ask_ai', { prompt })
@@ -259,27 +270,36 @@ Product Details:
 - Description: ${product.description || 'Premium quality'}
 - Tags: ${product.tags || ''}
 
-IMPORTANT RULES FOR ALL CAPTIONS:
-1. Start with the SALE PRICE prominently (e.g., "Sirf Rs. 2500 mein!")
-2. If Retail Price > Sale Price, mention it as crossed out (e.g., "~~Rs. 3000~~ Rs. 2500")
-3. Be AGGRESSIVE and persuasive — create urgency, excitement, FOMO
-4. Include local area hashtags: #Narowal #Zafarwal #Shakargarh #NarowalFashion
-5. Write in Hinglish (Roman Urdu + English)
-6. Target: Narowal district women/girls age 10-50
+CRITICAL MARKETING RULES — APPLY TO ALL PLATFORMS:
+1. PRICE FIRST: Every caption MUST start with the sale price at the very top. Format:
+   🔥 SALE Rs. ${product.sale_price.toFixed(0)}
+   ~~Retail Rs. ${(product as any).retail_price?.toFixed(0) || (product.sale_price * 1.2).toFixed(0)}~~
+   Save Rs. ${(((product as any).retail_price || (product.sale_price * 1.2)) - product.sale_price).toFixed(0)}!
+   Then continue with marketing content below the price block.
+2. EMOTIONAL TONE: Warm, exciting, friendly. Write like a local ladies clothing seller.
+   Use openers like 'Girls ❤️' or 'Ladies ❤️' or 'Beautiful Girls ❤️' when appropriate.
+3. LOCAL PUNJABI FLAVOR: Use ONE short Roman Punjabi phrase per post (max). Examples:
+   'Raulay pe gaye je!' / 'Hun gal ban gayi!' / 'Oye hoye, ki gal ae!'
+   Only when it naturally fits. Do NOT force into every post.
+4. FORBIDDEN WORDS: Never use 'Elegant', 'Beautiful', 'Premium quality' as generic descriptors.
+5. HINGLISH ONLY: Roman Urdu + English. Never pure English or Urdu script.
+6. LOCAL HASHTAGS: Always include #NarowalFashion #NarowalLawn #Zafarwal #Shakargarh
+7. AGGRESSIVE & PERSUASIVE: Create urgency, FOMO, excitement. Make them want to buy NOW.
+8. TARGET: Narowal district women/girls age 10-50 (rural + urban)
 
-Generate marketing content for ALL 5 platforms in ONE response. Return ONLY valid JSON (no markdown, no code blocks, no explanation). Use this exact structure:
+Generate marketing content for ALL 5 platforms in ONE response. Return ONLY valid JSON:
 
 {
-  "whatsapp_status": "2-3 line aggressive WhatsApp Status. Start with sale price. Create urgency. 1-2 emojis.",
-  "whatsapp_direct": "2 line punchy direct pitch. Sale price first. 'DM to order NOW'.",
-  "facebook": "3-5 line aggressive Facebook post. Sale price prominent, retail crossed out. Include Narowal/Zafarwal/Shakargarh hashtags. Emojis.",
-  "instagram": "3-5 line trendy Instagram caption. Sale price first. 5-8 hashtags including #NarowalFashion #NarowalLawn #Zafarwal #Shakargarh.",
-  "tiktok": "2-3 line hook-driven TikTok caption. MUST include #fyp #foryou #NarowalFashion #Zafarwal.",
+  "whatsapp_status": "Start with price block. Then 2-3 lines warm+urgent. One Punjabi phrase if natural. 1-2 emojis. End with 'WhatsApp karein order ke liye!'",
+  "whatsapp_direct": "Price first line. Then 1 line punchy pitch. 'Abhi DM karein!' ",
+  "facebook": "Price block at top. Then 3-5 lines emotional+persuasive. Address 'Girls ❤️' or 'Ladies ❤️'. Include #NarowalFashion #Zafarwal #Shakargarh. Emojis.",
+  "instagram": "Price block first. Then 3-5 lines trendy+emotional. Line breaks. 5-8 hashtags: #NarowalFashion #NarowalLawn #Zafarwal #Shakargarh #instafashion",
+  "tiktok": "Price first. Then 2-3 lines hook-driven. MUST include #fyp #foryou #NarowalFashion #Zafarwal.",
   "hashtags": ["#NarowalFashion", "#NarowalLawn", "#Zafarwal", "#Shakargarh", "#fyp"],
-  "cta": "Short aggressive call-to-action"
+  "cta": "Short aggressive Hinglish call-to-action"
 }
 
-Write in Hinglish (Roman Urdu + English). Return ONLY the JSON.`
+Write in Hinglish. Return ONLY the JSON.`
 
     try {
       const response: any = await invoke('ask_ai', { prompt })
