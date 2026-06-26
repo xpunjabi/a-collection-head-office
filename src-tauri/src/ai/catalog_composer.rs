@@ -20,6 +20,11 @@ pub struct CatalogDraft {
     pub retail_price: Option<f64>,
     #[serde(default)]
     pub sale_price: Option<f64>,
+    // v0.13.9: Locally saved image filename (from user upload).
+    // When this is set, save_catalog_draft uses it directly instead of
+    // trying to download from best_image_url.
+    #[serde(default)]
+    pub saved_image_filename: Option<String>,
 }
 
 pub async fn generate_catalog_draft(

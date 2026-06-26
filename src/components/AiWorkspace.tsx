@@ -95,6 +95,30 @@ export default function AiWorkspace() {
   const handleAddToCatalog = async (index: number, draft: import('../stores/store').CatalogDraft) => {
     setSavingIndex(index)
     try {
+      // v0.13.9: Apply any pending draft edits BEFORE saving
+      // This was THE critical bug — edits were only applied when isEditing===true,
+      // but by the time user clicks "Add to Catalog", isEditing is false.
+      // Now we always apply edits if they exist.
+      const edits = draftEdits[index]
+      if (edits) {
+        draft.title = edits.title
+        draft.brand = edits.brand || undefined
+        draft.fabric = edits.fabric || undefined
+        draft.design_code = edits.design_code || undefined
+        draft.notes = edits.notes || undefined
+        draft.cost_price = edits.cost_price ? Number(edits.cost_price) : undefined
+        draft.retail_price = edits.retail_price ? Number(edits.retail_price) : undefined
+        draft.sale_price = edits.sale_price ? Number(edits.sale_price) : undefined
+      }
+
+      // v0.13.9: Inject saved image filename into draft
+      const msg = useAppStore.getState().aiMessages[index]
+      const savedImage = (msg as any).saved_image
+      if (savedImage) {
+        draft.saved_image_filename = savedImage
+        draft.best_image_url = undefined // Don't try web download, use local image
+      }
+
       await invoke('save_catalog_draft', { draft })
       setToast('Item added to catalog!')
       removeAiMessage(index)

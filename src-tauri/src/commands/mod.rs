@@ -515,7 +515,17 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
     //
     // If best_image_url is None or download fails, fall back to "[]" (no
     // image attached). The save never fails due to image download issues.
-    let images_json: String = if let Some(ref url) = draft.best_image_url {
+    // v0.13.9: Check saved_image_filename FIRST (user-uploaded image).
+    // If not present, fall back to best_image_url (web image download).
+    // This was THE critical bug — user's uploaded image was never saved
+    // because only best_image_url was checked.
+    let images_json: String = if let Some(ref filename) = draft.saved_image_filename {
+        if !filename.is_empty() {
+            serde_json::to_string(&[filename]).unwrap_or_else(|_| "[]".to_string())
+        } else {
+            "[]".to_string()
+        }
+    } else if let Some(ref url) = draft.best_image_url {
         if !url.is_empty() {
             match download_and_save_image(url).await {
                 Ok(filename) => {

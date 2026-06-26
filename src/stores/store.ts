@@ -147,6 +147,8 @@ export interface CatalogDraft {
   cost_price?: number;
   retail_price?: number;
   sale_price?: number;
+  // v0.13.9: Locally saved image filename (from user upload)
+  saved_image_filename?: string;
 }
 
 export type AssistantResult =
@@ -525,14 +527,29 @@ export const useAppStore = create<AppState>((set, get) => ({
         history: history.length > 0 ? history : null,
       });
 
-      // If we sent an image and got a product draft, save the image locally
-      if (imageData && response.product_draft) {
+      // v0.13.9: Save user-uploaded image for BOTH code paths:
+      // - product_draft (fallback path) 
+      // - fast_path_data (fast path — THIS WAS THE BUG! Image was never saved
+      //   because only product_draft was checked, but fast_path_data is the
+      //   one that's populated when AI generates a catalog draft from image)
+      if (imageData) {
         try {
           const savedName = await invoke<string>('save_base64_image', {
             base64Data: imageData,
             formatType: 'thumbnail',
           })
-          response.product_draft.images = [savedName]
+          // Save image filename to product_draft if it exists
+          if (response.product_draft) {
+            response.product_draft.images = [savedName]
+          }
+          // Save image filename to fast_path_data draft if it exists
+          if (response.fast_path_data && response.fast_path_data.type === 'NewCatalogDraft') {
+            // Store the saved image filename on the message so AiWorkspace
+            // can pass it to save_catalog_draft when user clicks Add to Catalog
+            // We'll store it as a separate field that AiWorkspace reads
+          }
+          // Store savedName on the response so frontend can use it
+          ;(response as any)._saved_image = savedName
         } catch (err) {
           console.error('Failed to save image from AI:', err)
         }
@@ -548,6 +565,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         suggested_actions: response.suggested_actions,
         fast_path_data: response.fast_path_data,
         image_data: imageData || undefined,
+        // v0.13.9: Pass saved image filename so AiWorkspace can inject it
+        // into the draft when user clicks "Add to Catalog"
+        saved_image: (response as any)._saved_image || undefined,
       };
 
       set((state) => ({
