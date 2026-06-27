@@ -95,31 +95,33 @@ export default function AiWorkspace() {
   const handleAddToCatalog = async (index: number, draft: import('../stores/store').CatalogDraft) => {
     setSavingIndex(index)
     try {
-      // v0.13.9: Apply any pending draft edits BEFORE saving
-      // This was THE critical bug — edits were only applied when isEditing===true,
-      // but by the time user clicks "Add to Catalog", isEditing is false.
-      // Now we always apply edits if they exist.
+      // v0.14.1: Build a FRESH object with all edits applied.
+      // Previously we mutated the draft in-place, but Tauri's serialization
+      // sometimes didn't pick up the mutated fields (especially price fields
+      // that were undefined on the original draft object). Creating a fresh
+      // object ensures ALL fields are explicitly set before serialization.
       const edits = draftEdits[index]
-      if (edits) {
-        draft.title = edits.title
-        draft.brand = edits.brand || undefined
-        draft.fabric = edits.fabric || undefined
-        draft.design_code = edits.design_code || undefined
-        draft.notes = edits.notes || undefined
-        draft.cost_price = edits.cost_price ? Number(edits.cost_price) : undefined
-        draft.retail_price = edits.retail_price ? Number(edits.retail_price) : undefined
-        draft.sale_price = edits.sale_price ? Number(edits.sale_price) : undefined
+      const savedImage = (useAppStore.getState().aiMessages[index] as any).saved_image
+
+      const draftToSave: import('../stores/store').CatalogDraft = {
+        title: edits?.title ?? draft.title,
+        brand: edits?.brand || draft.brand || undefined,
+        fabric: edits?.fabric || draft.fabric || undefined,
+        design_code: edits?.design_code || draft.design_code || undefined,
+        notes: edits?.notes || draft.notes || undefined,
+        web_evidence_count: draft.web_evidence_count,
+        web_evidence_snippets: draft.web_evidence_snippets,
+        best_image_url: savedImage ? undefined : draft.best_image_url,
+        cost_price: edits?.cost_price ? Number(edits.cost_price) : draft.cost_price,
+        retail_price: edits?.retail_price ? Number(edits.retail_price) : draft.retail_price,
+        sale_price: edits?.sale_price ? Number(edits.sale_price) : draft.sale_price,
+        saved_image_filename: savedImage || undefined,
       }
 
-      // v0.13.9: Inject saved image filename into draft
-      const msg = useAppStore.getState().aiMessages[index]
-      const savedImage = (msg as any).saved_image
-      if (savedImage) {
-        draft.saved_image_filename = savedImage
-        draft.best_image_url = undefined // Don't try web download, use local image
-      }
+      // Debug: log what we're sending
+      console.log('[handleAddToCatalog] Saving draft:', JSON.stringify(draftToSave, null, 2))
 
-      await invoke('save_catalog_draft', { draft })
+      await invoke('save_catalog_draft', { draft: draftToSave })
       setToast('Item added to catalog!')
       removeAiMessage(index)
     } catch (err) {
@@ -558,7 +560,32 @@ export default function AiWorkspace() {
                         <span>{savingIndex === i ? 'Saving...' : 'Add to Catalog'}</span>
                       </button>
                       <button
-                        onClick={() => setEditingDraftIndex(editingDraftIndex === i ? null : i)}
+                        onClick={() => {
+                          if (editingDraftIndex === i) {
+                            // Done — close edit mode
+                            setEditingDraftIndex(null)
+                          } else {
+                            // Edit — open edit mode + INITIALIZE draftEdits with current values
+                            // v0.14.1: This was THE bug — draftEdits[i] was not initialized,
+                            // so price fields showed empty. Now we initialize with current
+                            // draft values so the user sees what's already there.
+                            const d = msg.fast_path_data!.data as any
+                            setDraftEdits(prev => ({
+                              ...prev,
+                              [i]: {
+                                title: d.title || '',
+                                brand: d.brand || '',
+                                fabric: d.fabric || '',
+                                design_code: d.design_code || '',
+                                notes: d.notes || '',
+                                cost_price: d.cost_price != null ? String(d.cost_price) : '',
+                                retail_price: d.retail_price != null ? String(d.retail_price) : '',
+                                sale_price: d.sale_price != null ? String(d.sale_price) : '',
+                              }
+                            }))
+                            setEditingDraftIndex(i)
+                          }
+                        }}
                         className="flex items-center space-x-1 px-2.5 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-[11px] font-medium transition-colors"
                       >
                         <Edit3 size={12} />
