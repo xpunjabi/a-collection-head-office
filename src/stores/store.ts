@@ -571,7 +571,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
 
       set((state) => ({
-        aiMessages: [...state.aiMessages, assistantMsg],
+        // v0.14.4: Cap aiMessages at 50 entries (was unbounded — after 100+
+        // interactions every set() re-diffed an ever-growing array, slowing
+        // the chat panel). Keep the initial greeting + last 49 messages.
+        aiMessages: [...state.aiMessages, assistantMsg].slice(-50),
         isAiLoading: false,
       }));
 

@@ -8,6 +8,21 @@ pub fn init_db<P: AsRef<Path>>(db_path: P) -> Result<Connection> {
     }
 
     let mut conn = Connection::open(db_path)?;
+
+    // v0.14.4: Enable WAL mode + tune PRAGMAs for concurrent read/write.
+    // The automation scheduler writes backups + reports in the background
+    // while the UI reads products — WAL lets these coexist without blocking.
+    // synchronous=NORMAL is safe under WAL (writes are still durable to disk
+    // on checkpoint). cache_size=-4096 means 4MB page cache (negative =
+    // kibibytes). temp_store=MEMORY avoids temp files on disk for sorts.
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA cache_size = -4096;
+         PRAGMA temp_store = MEMORY;
+         PRAGMA foreign_keys = ON;"
+    )?;
+
     run_migrations(&mut conn)?;
     Ok(conn)
 }
@@ -339,6 +354,39 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
     // segments beyond the defaults.
     add_col_if_missing(conn, "customers", "segment", "TEXT DEFAULT 'general'")?;
     add_col_if_missing(conn, "customers", "is_active", "INTEGER NOT NULL DEFAULT 1")?;
+
+    // v0.14.4: Add performance indexes.
+    // agent_ledger_entries is queried heavily by get_agent_summary,
+    // return_stock_from_agent, record_sale (all do SUM(CASE WHEN entry_type=...)
+    // filtered by agent_id + product_id). With 1000+ ledger entries (realistic
+    // after 6 months of business), these queries do full table scans. The
+    // composite (agent_id, product_id) index covers the most common filter,
+    // and (entry_type) speeds up the per-type SUMs.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ledger_agent_product
+         ON agent_ledger_entries(agent_id, product_id)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ledger_entry_type
+         ON agent_ledger_entries(entry_type)",
+        [],
+    )?;
+    // products(status) is used by Catalog filters + dashboard stock queries.
+    // Adding stock_quantity makes it a covering index for low-stock lookups.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_products_status
+         ON products(status, stock_quantity)",
+        [],
+    )?;
+    // share_logs is queried by product_id + sorted by shared_at for "Last
+    // promoted date" feature (planned) and stale stock analysis.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_share_logs_product_date
+         ON share_logs(product_id, shared_at DESC)",
+        [],
+    )?;
+
     // v0.12.6: Clean up duplicate agents (same name, different agent_code)
     // that were created before the name-check fix in sync_locations_to_agents.
     cleanup_duplicate_agents(conn)?;

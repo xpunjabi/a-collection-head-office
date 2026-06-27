@@ -461,9 +461,18 @@ pub async fn ask_ai(
 #[tauri::command]
 pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai::ProductDraft) -> Result<i64, String> {
     let now = chrono::Utc::now().to_rfc3339();
+    // v0.14.4: Auto-generate SKU when empty. The products.sku column has a
+    // UNIQUE constraint, and an empty string ("") is itself a value — so
+    // two drafts saved without SKU would collide on the second one.
+    // Generating `AC-<timestamp_ms>` avoids the collision and gives the
+    // user a sensible placeholder they can edit later in the Catalog form.
+    let sku = match draft.sku.as_deref() {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => format!("AC-{}", chrono::Utc::now().timestamp_millis()),
+    };
     let product = crate::catalog::Product {
         id: None,
-        sku: draft.sku.clone().unwrap_or_default(),
+        sku,
         name: draft.name.clone().unwrap_or_else(|| "New Product".to_string()),
         category: draft.category.clone(),
         color: draft.color.clone(),
@@ -884,21 +893,40 @@ pub async fn send_stock_to_agent(
         return Err("Quantity must be positive.".to_string());
     }
     let conn = state.0.lock().await;
+    // v0.14.4: Wrap the read-check-write in BEGIN IMMEDIATE / COMMIT.
+    // The Mutex already serializes Tauri commands, but rusqlite's autocommit
+    // mode means the read (ho_qty check) and the write (ledger insert +
+    // product update) are separate transactions. If the app crashes between
+    // them, the ledger entry is committed but the product's
+    // qty_in_head_office is not decremented — leading to phantom stock.
+    // BEGIN IMMEDIATE acquires a RESERVED lock at the start, ensuring the
+    // read+check+write trio is atomic.
+    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
+
     // Validate: product must have enough stock in Head Office.
     let ho_qty: i64 = conn.query_row(
         "SELECT COALESCE(qty_in_head_office, stock_quantity, 0) FROM products WHERE id = ?1",
         rusqlite::params![product_id],
         |r| r.get(0),
-    ).map_err(|e| format!("Product not found: {}", e))?;
+    ).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        format!("Product not found: {}", e)
+    })?;
     if ho_qty < qty {
+        let _ = conn.execute("ROLLBACK", []);
         return Err(format!(
             "Insufficient stock in Head Office. Available: {}, requested: {}.",
             ho_qty, qty
         ));
     }
-    agents::send_stock_to_agent(
+    let result = agents::send_stock_to_agent(
         &conn, agent_id, product_id, qty, unit_price, notes.as_deref(),
-    ).map_err(|e| e.to_string())
+    ).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    });
+    conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+    result
 }
 
 /// Return stock from an agent back to Head Office.
@@ -916,6 +944,10 @@ pub async fn return_stock_from_agent(
         return Err("Quantity must be positive.".to_string());
     }
     let conn = state.0.lock().await;
+    // v0.14.4: Wrap in BEGIN IMMEDIATE / COMMIT (see send_stock_to_agent
+    // comment for full rationale).
+    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
+
     // Validate: agent must have enough stock of this product.
     let agent_qty: i64 = conn.query_row(
         "SELECT COALESCE(SUM(CASE WHEN entry_type = 'stock_sent' THEN qty ELSE 0 END) -
@@ -926,14 +958,20 @@ pub async fn return_stock_from_agent(
         |r| r.get(0),
     ).unwrap_or(0);
     if agent_qty < qty {
+        let _ = conn.execute("ROLLBACK", []);
         return Err(format!(
             "Agent does not have enough stock of this product. Agent has: {}, requested: {}.",
             agent_qty, qty
         ));
     }
-    agents::return_stock_from_agent(
+    let result = agents::return_stock_from_agent(
         &conn, agent_id, product_id, qty, unit_price, notes.as_deref(),
-    ).map_err(|e| e.to_string())
+    ).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    });
+    conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+    result
 }
 
 /// Agent reports a sale (stock sold by agent to end customer).
@@ -1383,6 +1421,31 @@ pub async fn record_sale(
     let now = chrono::Utc::now().to_rfc3339();
     let total = qty as f64 * unit_sale_price;
 
+    // v0.14.4: Wrap the entire sale-recording flow in BEGIN IMMEDIATE / COMMIT.
+    // record_sale writes to 2-3 tables (agent_ledger_entries, products,
+    // sales) and does a stock-availability check before mutating. Without
+    // a transaction, a crash between any two of these writes leaves the DB
+    // inconsistent — e.g., the sales row exists but the product's
+    // qty_sold was never incremented, or the ledger entry exists but the
+    // sales row doesn't. BEGIN IMMEDIATE acquires a RESERVED lock so the
+    // whole "check stock → insert ledger → update product → insert sale →
+    // update profit_status" sequence is atomic.
+    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
+
+    // Helper closure to rollback on error and convert rusqlite::Error to String.
+    // Used for the early-return paths below.
+    macro_rules! try_or_rollback {
+        ($expr:expr) => {
+            match $expr {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", []);
+                    return Err(e);
+                }
+            }
+        };
+    }
+
     // If agent_id is provided, record as agent sale (reduces agent stock)
     if let Some(aid) = agent_id {
         // Validate agent has enough stock of this product
@@ -1395,6 +1458,7 @@ pub async fn record_sale(
             |r| r.get(0),
         ).unwrap_or(0);
         if agent_qty < qty {
+            let _ = conn.execute("ROLLBACK", []);
             return Err(format!(
                 "Agent does not have enough stock. Agent has: {}, requested: {}.",
                 agent_qty, qty
@@ -1402,7 +1466,7 @@ pub async fn record_sale(
         }
         // Create agent ledger entry for the sale
         let amount = qty as f64 * unit_sale_price;
-        conn.execute(
+        try_or_rollback!(conn.execute(
             "INSERT INTO agent_ledger_entries (agent_id, product_id, entry_type, qty, unit_price, amount, reference_code, notes, entry_date, created_at, updated_at)
              VALUES (?1, ?2, 'sale_reported', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
@@ -1411,34 +1475,41 @@ pub async fn record_sale(
                 notes.as_deref().unwrap_or(""),
                 &now, &now, &now,
             ],
-        ).map_err(|e| e.to_string())?;
+        ).map_err(|e| e.to_string()));
         // Reduce agent stock, increase sold
-        conn.execute(
+        try_or_rollback!(conn.execute(
             "UPDATE products SET qty_with_agents = MAX(0, qty_with_agents - ?1), qty_sold = qty_sold + ?2, updated_at = ?3 WHERE id = ?4",
             rusqlite::params![qty, qty, &now, product_id],
-        ).map_err(|e| e.to_string())?;
+        ).map_err(|e| e.to_string()));
     } else {
         // Direct HO sale — validate HO has enough stock
-        let ho_qty: i64 = conn.query_row(
+        let ho_qty: i64 = match conn.query_row(
             "SELECT COALESCE(qty_in_head_office, stock_quantity, 0) FROM products WHERE id = ?1",
             rusqlite::params![product_id],
             |r| r.get(0),
-        ).map_err(|e| format!("Product not found: {}", e))?;
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", []);
+                return Err(format!("Product not found: {}", e));
+            }
+        };
         if ho_qty < qty {
+            let _ = conn.execute("ROLLBACK", []);
             return Err(format!(
                 "Insufficient stock in Head Office. Available: {}, requested: {}.",
                 ho_qty, qty
             ));
         }
         // Reduce HO stock, increase sold
-        conn.execute(
+        try_or_rollback!(conn.execute(
             "UPDATE products SET qty_in_head_office = qty_in_head_office - ?1, stock_quantity = stock_quantity - ?2, qty_sold = qty_sold + ?3, updated_at = ?4 WHERE id = ?5",
             rusqlite::params![qty, qty, qty, &now, product_id],
-        ).map_err(|e| e.to_string())?;
+        ).map_err(|e| e.to_string()));
     }
 
     // Create sales table entry
-    conn.execute(
+    try_or_rollback!(conn.execute(
         "INSERT INTO sales (product_id, sale_channel, sale_type, agent_id, qty, unit_sale_price, total_sale_amount, customer_name, customer_phone, notes, sale_date, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         rusqlite::params![
@@ -1456,7 +1527,7 @@ pub async fn record_sale(
             &now,
             &now,
         ],
-    ).map_err(|e| e.to_string())?;
+    ).map_err(|e| e.to_string()));
     let sale_id = conn.last_insert_rowid();
 
     // Auto-update profit_status based on remaining stock
@@ -1472,10 +1543,15 @@ pub async fn record_sale(
     } else {
         "in_head_office"
     };
-    conn.execute(
+    try_or_rollback!(conn.execute(
         "UPDATE products SET profit_status = ?1, updated_at = ?2 WHERE id = ?3",
         rusqlite::params![new_status, &now, product_id],
-    ).map_err(|e| e.to_string())?;
+    ).map_err(|e| e.to_string()));
+
+    conn.execute("COMMIT", []).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    })?;
 
     Ok(sale_id)
 }

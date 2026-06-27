@@ -14,6 +14,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # v0.14.4: Verify that the Cargo.toml version matches the pushed tag.
+      # A mismatch means the binary reports one version (e.g. 0.14.3) while
+      # the GitHub Release says another (e.g. v0.14.4) — confusing for users
+      # downloading the installer. Fails fast before wasting build minutes.
+      - name: Verify version matches tag
+        shell: bash
+        run: |
+          CARGO_VERSION=$(grep '^version' src-tauri/Cargo.toml | head -1 | sed 's/.*= "\(.*\)".*/\1/')
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "Cargo.toml version: $CARGO_VERSION"
+          echo "Tag version:         $TAG_VERSION"
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Version mismatch — Cargo.toml=$CARGO_VERSION but tag=$TAG_VERSION. Bump all 3 files (Cargo.toml, tauri.conf.json, package.json) before tagging."
+            exit 1
+          fi
+          echo "Version check passed."
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:

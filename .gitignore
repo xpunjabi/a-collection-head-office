@@ -6,7 +6,12 @@ Thumbs.db
 *.log
 release-artifacts/
 
-# Generated installer
+# Generated installers — never commit binaries to git.
+# Installers are published as GitHub Release assets (softprops/action-gh-release),
+# not stored in the repo. Tracking a 5+ MB .exe in git history bloats clones
+# and there's no integrity check or signature on a committed binary anyway.
 *.exe
+*.msi
+
 # Logo source
 logo image/
