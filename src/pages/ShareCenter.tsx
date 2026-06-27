@@ -4,12 +4,13 @@ import { useAppStore } from '../stores/store'
 import {
   Share2, MessageCircle, Facebook, Instagram, Copy, Check,
   AlertTriangle, RefreshCw, Sparkle, Send, Save, Trash2, Brain,
-  Edit3, Hash
+  Edit3, Hash, Image as ImageIcon
 } from 'lucide-react'
 import {
   shareToPlatform,
   SharePlatform
 } from '../utils/share'
+import ProductImage from '../components/ProductImage'
 
 // Types
 interface ShareLog {
@@ -421,7 +422,7 @@ Write in Hinglish. Return ONLY the JSON.`
     }
 
     try {
-      await shareToPlatform(sharePlatform, caption, imageData)
+      await shareToPlatform(sharePlatform, caption, imageData, selectedProduct?.name)
       // Log the share
       await invoke('log_share', {
         productId: selectedProductId || null,
@@ -591,8 +592,29 @@ Write in Hinglish. Return ONLY the JSON.`
               </select>
             </div>
             {selectedProduct && (
-              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 text-xs text-gray-400">
-                <div className="text-gray-300 font-semibold mb-1">{selectedProduct.name}</div>
+              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 text-xs text-gray-400 space-y-2">
+                {/* v0.14.6: Product image preview so user sees what will be shared.
+                    Previously the summary card only showed text (name, SKU, price,
+                    stock) — user couldn't see the image that would accompany the
+                    caption when sharing to social platforms. */}
+                {(() => {
+                  try {
+                    const imgs: string[] = JSON.parse(selectedProduct.images || '[]')
+                    if (imgs.length > 0 && imgs[0]) {
+                      return (
+                        <div className="w-full h-32 bg-slate-900 rounded-lg overflow-hidden border border-gray-800 flex items-center justify-center">
+                          <ProductImage filename={imgs[0]} alt={selectedProduct.name} className="object-contain w-full h-full" />
+                        </div>
+                      )
+                    }
+                  } catch {}
+                  return (
+                    <div className="w-full h-32 bg-slate-900 rounded-lg overflow-hidden border border-gray-800 flex items-center justify-center text-gray-600">
+                      <ImageIcon size={32} />
+                    </div>
+                  )
+                })()}
+                <div className="text-gray-300 font-semibold">{selectedProduct.name}</div>
                 <div>SKU: {selectedProduct.sku}</div>
                 <div>Price: {fmtMoney(selectedProduct.sale_price)}</div>
                 <div>HO Stock: {selectedProduct.qty_in_head_office ?? selectedProduct.stock_quantity}</div>

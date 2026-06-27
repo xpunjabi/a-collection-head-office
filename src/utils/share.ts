@@ -101,62 +101,53 @@ export function buildProductShareText(opts: {
 /**
  * Share `text` to the given platform.
  *
- * v0.14.5: If `imageData` (base64 JPEG) is provided, the image is written
- * to the SYSTEM CLIPBOARD via tauri-plugin-clipboard-manager BEFORE the
- * share URL opens. This means after the platform opens (FB/IG/WhatsApp),
- * the user can press Ctrl+V to paste BOTH the caption text AND the image
- * directly into the post composer — no manual file attach required.
+ * v0.14.6: If `imageData` (base64 JPEG) is provided, the image is:
+ *   1. Saved to the user's Downloads folder as "A-Collection_<name>_<ts>.jpg"
+ *      so the user can DRAG-DROP it into FB/IG/WhatsApp post composers
+ *      (drag-drop is universally supported; clipboard image paste is not).
+ *   2. ALSO written to the system clipboard via tauri-plugin-clipboard-manager
+ *      as a bonus for platforms that DO support Ctrl+V image paste.
  *
- * The previous flow (v0.13.4) only saved the image to the app's images
- * folder, which the user couldn't easily find. The new flow puts the
- * image on the clipboard where it's a single Ctrl+V away.
+ * v0.14.5 history: clipboard-only approach didn't work reliably on FB/IG
+ * web composers (Firefox/Edge don't accept pasted images in FB's composer).
+ * v0.14.6 adds Downloads-folder save as the PRIMARY mechanism, with
+ * clipboard as a secondary bonus.
  *
- * Platform behavior:
- * - WhatsApp: opens wa.me/?text=... (text pre-filled). Image on clipboard
- *   ready to paste into WhatsApp's image picker.
- * - Twitter/X: opens twitter.com/intent/tweet?text=... (text pre-filled).
- *   Image on clipboard ready to paste.
- * - Facebook: opens facebook.com. Text + image both on clipboard — user
- *   pastes into "Create Post".
- * - Instagram: opens instagram.com. Text + image both on clipboard — user
- *   pastes into the caption box + image picker.
- *
- * Returns true if the share was initiated, false if the platform is unknown.
+ * @param platform   — 'whatsapp' | 'facebook' | 'twitter/x' | 'instagram'
+ * @param text       — caption text to share
+ * @param imageData  — base64-encoded JPEG image (optional)
+ * @param productName — product name for the saved filename (optional, v0.14.6)
  */
 export async function shareToPlatform(
   platform: SharePlatform,
   text: string,
   imageData?: string | null,
+  productName?: string | null,
 ): Promise<boolean> {
   const encoded = encodeURIComponent(text)
   let url = ''
 
-  // v0.14.5: Write text + image to system clipboard BEFORE opening the
-  // share URL. The order is: image first (so it's the "current" clipboard
-  // content for image-paste operations), then text on a separate clipboard
-  // write (text is what the user sees when they Ctrl+V in a text box).
-  // Note: a clipboard can hold EITHER text OR image at a time, not both.
-  // Strategy: put IMAGE on clipboard (since text is also pre-filled in the
-  // share URL for WhatsApp/Twitter), and alert the user that caption text
-  // was copied separately so they can paste it after the image.
-  let imageOnClipboard = false
-  let textOnClipboard = false
-
-  // Always copy caption text first — this is the primary content.
-  try {
-    await navigator.clipboard.writeText(text)
-    textOnClipboard = true
-  } catch {
-    // Clipboard writeText might fail in some Tauri contexts; the
-    // share URL still carries the text for WhatsApp/Twitter.
-  }
-
-  // Then, if an image is provided, write it to the clipboard OVERWRITING
-  // the text. We alert the user that they need to paste text first, then
-  // re-copy image (or just paste image into the image picker box).
+  // v0.14.6: Save image to Downloads folder FIRST (primary mechanism).
+  // Drag-drop from Downloads works on ALL platforms and ALL browsers.
+  let savedImagePath: string | null = null
   if (imageData && IS_TAURI) {
     try {
-      // Convert base64 string to Uint8Array for writeImage
+      const { invoke } = await import('@tauri-apps/api/core')
+      savedImagePath = await invoke<string>('save_image_for_share', {
+        base64Data: imageData,
+        productName: productName || 'product',
+      })
+      console.log('[share] Image saved to Downloads:', savedImagePath)
+    } catch (err) {
+      console.warn('[share] Could not save image to Downloads:', err)
+    }
+  }
+
+  // v0.14.5: Also write image to system clipboard as a BONUS.
+  // Some platforms (WhatsApp Web in Chrome) DO accept pasted images.
+  let imageOnClipboard = false
+  if (imageData && IS_TAURI) {
+    try {
       const cleanBase64 = imageData.includes(',') ? imageData.split(',')[1] : imageData
       const binaryString = atob(cleanBase64)
       const bytes = new Uint8Array(binaryString.length)
@@ -166,48 +157,54 @@ export async function shareToPlatform(
       const { writeImage } = await import('@tauri-apps/plugin-clipboard-manager')
       await writeImage(bytes)
       imageOnClipboard = true
-      console.log('[share] Image written to system clipboard')
+      console.log('[share] Image also written to clipboard')
     } catch (err) {
-      console.warn('[share] Could not write image to clipboard:', err)
-      // Fall back: save image to disk so user can attach manually
-      try {
-        const { invoke } = await import('@tauri-apps/api/core')
-        await invoke<string>('save_base64_image', {
-          base64Data: imageData,
-          formatType: 'thumbnail',
-        })
-        console.log('[share] Image saved to disk as fallback')
-      } catch (e) {
-        console.warn('[share] Disk save fallback also failed:', e)
-      }
+      console.warn('[share] Clipboard write failed (Downloads save still works):', err)
     }
   }
 
-  // Build a helpful alert message depending on what's on the clipboard.
+  // Copy caption text to clipboard (overwrites image on clipboard — that's
+  // OK because the image is saved to Downloads as the primary mechanism).
+  let textOnClipboard = false
+  try {
+    await navigator.clipboard.writeText(text)
+    textOnClipboard = true
+  } catch {
+    // Clipboard writeText might fail in some Tauri contexts
+  }
+
+  // Build a helpful alert message.
   const buildAlertMsg = (platformName: string): string => {
-    let msg = ''
-    if (imageOnClipboard && textOnClipboard) {
-      msg = `${platformName} opening now!\n\n`
-        + '📋 Caption text + 📷 product image dono clipboard pe hain.\n\n'
-        + `${platformName} pe:\n`
-        + '1. "Create Post" / "New Tweet" / chat box me click karein\n'
-        + '2. Caption paste karne ke liye pehle text box me Ctrl+V (text aayega)\n'
-        + '3. Image box / image picker me Ctrl+V (image aayega)\n\n'
-        + 'Note: clipboard ek waqt me ya to text ya image hold karta hai. '
-        + 'Agar image paste nahi hoti to wapas app me aao aur "Copy Caption" '
-        + 'se text dobara copy karein.'
+    let msg = `${platformName} opening now!\n\n`
+
+    if (savedImagePath) {
+      // Extract just the filename for display
+      const filename = savedImagePath.split(/[\\/]/).pop() || savedImagePath
+      const folder = savedImagePath.split(/[\\/]/).slice(-2, -1)[0] || 'Downloads'
+      msg += `📷 Product image saved to:\n   ${folder}\\${filename}\n\n`
+      msg += `${platformName} pe:\n`
+      msg += `1. "Create Post" / chat box open karein\n`
+      msg += `2. Caption paste karne ke liye text box me Ctrl+V\n`
+      msg += `3. Image attach karne ke liye:\n`
+      msg += `   • DRAG the file from ${folder} folder into the post, OR\n`
+      msg += `   • Click "Photo/Video" button and browse to ${folder}\n\n`
+      if (imageOnClipboard) {
+        msg += `Bonus: image clipboard pe bhi hai — kuch platforms (WhatsApp Web)`
+        msg += ` me Ctrl+V se bhi paste ho jayegi.\n\n`
+      }
     } else if (imageOnClipboard) {
-      msg = `${platformName} opening now!\n\n`
-        + '📷 Product image clipboard pe copy ho gayi hai.\n\n'
-        + 'Image picker / image box me Ctrl+V paste karein.\n'
-        + 'Caption text neehe box me type karne ke liye diya gaya hai.'
+      msg += `📷 Product image clipboard pe copy ho gayi hai.\n`
+      msg += `Image box / image picker me Ctrl+V paste karein.\n\n`
+      if (textOnClipboard) {
+        msg += `📋 Caption bhi clipboard pe hai.\n`
+      }
     } else if (textOnClipboard) {
-      msg = `${platformName} opening now!\n\n`
-        + '📋 Caption text clipboard pe copy ho gaya hai.\n'
-        + 'Ctrl+V se paste karein.'
+      msg += `📋 Caption text clipboard pe copy ho gaya hai.\n`
+      msg += `Ctrl+V se paste karein.\n\n`
+      msg += `(Image save nahi ho payi — manual attach karein.)\n`
     } else {
-      msg = `${platformName} opening now!\n\n`
-        + 'Caption neehe box me paste karein (text share URL me already hai for WhatsApp/Twitter).'
+      msg += `Caption neeche box me paste karein.\n`
+      msg += `(Text share URL me already hai for WhatsApp/Twitter.)\n`
     }
     return msg
   }
@@ -215,37 +212,18 @@ export async function shareToPlatform(
   switch (platform) {
     case 'whatsapp':
       url = `https://wa.me/?text=${encoded}`
-      // For WhatsApp, the share URL already carries the text — so we can
-      // keep the image on the clipboard (overwrites text). User pastes
-      // image into WhatsApp's image picker.
-      if (imageOnClipboard) {
-        alert(buildAlertMsg('WhatsApp'))
-      }
+      alert(buildAlertMsg('WhatsApp'))
       break
     case 'facebook':
-      // FB doesn't accept pre-filled text via share URL anymore. Re-copy
-      // text to clipboard (overwrites image) since FB composer is a text
-      // box first. User can drag-drop image from app folder as fallback.
-      if (textOnClipboard) {
-        try { await navigator.clipboard.writeText(text) } catch {}
-      }
       url = 'https://www.facebook.com/'
       alert(buildAlertMsg('Facebook'))
       await openExternalUrl(url)
       return true
     case 'twitter/x':
       url = `https://twitter.com/intent/tweet?text=${encoded}`
-      if (imageOnClipboard) {
-        alert(buildAlertMsg('Twitter/X'))
-      }
+      alert(buildAlertMsg('Twitter/X'))
       break
     case 'instagram':
-      // IG has no web share URL. Text + image both via clipboard paste.
-      // For IG, text is more important (IG composer is text-first), so
-      // re-copy text over image.
-      if (textOnClipboard) {
-        try { await navigator.clipboard.writeText(text) } catch {}
-      }
       alert(buildAlertMsg('Instagram'))
       return true
     default:

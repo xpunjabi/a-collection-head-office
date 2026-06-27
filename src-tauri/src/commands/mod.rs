@@ -156,6 +156,61 @@ pub async fn save_base64_image(base64_data: String, format_type: String) -> Resu
         .map_err(|e| e.to_string())
 }
 
+/// v0.14.6: Save a product image to the user's Downloads folder (or Desktop
+/// as fallback) with a descriptive filename, so the user can easily find it
+/// and drag-drop into Facebook/Instagram/WhatsApp post composers.
+///
+/// Browser clipboard image paste is unreliable on FB/IG web composers
+/// (especially in Firefox/Edge). Drag-drop from a known file location is
+/// universally supported. This command saves the image to Downloads with
+/// a filename like "A-Collection_Unstitched-3-Piece_20260627-133000.jpg"
+/// and returns the full file path so the frontend can display it to the
+/// user in the alert message.
+#[tauri::command]
+pub async fn save_image_for_share(
+    base64_data: String,
+    product_name: String,
+) -> Result<String, String> {
+    use base64::Engine as _;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(&base64_data)
+        .map_err(|e| format!("Base64 decode error: {}", e))?;
+
+    // Pick target directory: Downloads > Desktop > home dir
+    let target_dir = dirs::download_dir()
+        .or_else(|| dirs::desktop_dir())
+        .or_else(|| dirs::home_dir())
+        .ok_or_else(|| "Could not find a suitable directory to save image".to_string())?;
+
+    // Sanitize product name for filename: replace spaces/special chars with hyphens
+    let safe_name: String = product_name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() { c }
+            else if c == '-' || c == '_' { c }
+            else { '-' }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    let safe_name = if safe_name.is_empty() { "product".to_string() } else { safe_name };
+
+    // Build filename with timestamp
+    let now = chrono::Utc::now();
+    let timestamp = now.format("%Y%m%d-%H%M%S").to_string();
+    let filename = format!("A-Collection_{}_{}.jpg", safe_name, timestamp);
+    let file_path = target_dir.join(&filename);
+
+    // Decode the image and re-save as JPEG (handles PNG/WebP/etc. inputs)
+    let img = image::load_from_memory(&raw)
+        .map_err(|e| format!("Image decode error: {}", e))?;
+    img.save_with_format(&file_path, image::ImageFormat::Jpeg)
+        .map_err(|e| format!("Image save error: {}", e))?;
+
+    // Return the full path as a string so frontend can show it to the user
+    Ok(file_path.to_string_lossy().to_string())
+}
+
 // ==================== LOCATIONS ====================
 
 #[tauri::command]

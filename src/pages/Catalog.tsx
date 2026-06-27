@@ -183,7 +183,7 @@ export default function Catalog() {
     })
     setOpenShareMenuFor(null)
     try {
-      await shareToPlatform(platform, text)
+      await shareToPlatform(platform, text, null, p.name)
     } catch (err) {
       console.error('[Catalog] share failed:', err)
       alert(`Could not open ${platform}. Error: ${err}`)
