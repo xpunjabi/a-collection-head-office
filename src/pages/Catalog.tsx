@@ -20,8 +20,23 @@ interface AgentStockEntry {
 }
 
 const SEASONS = ['', 'Summer', 'Winter', 'Eid Special', 'Festive', 'Spring', 'Autumn']
-const CATEGORIES = ['', '3 Piece', '2 Piece', 'Lawn', 'Cotton', 'Printed', 'Embroidery',
-  'Cut Piece', 'Gents Cotton', 'Gents Washing Wear', 'Seasonal']
+
+// v0.14.2: Simplified Category — suit type only (not fabric mixed in)
+const CATEGORIES = ['', '3 Piece', '2 Piece', 'Cut Piece', 'Gents']
+
+// v0.14.2: Dedicated Fabric dropdown — 24 fabric types
+const FABRICS = ['', 'Lawn', 'Cotton', 'Latha', 'Wash and Wear', 'Boski', 'Cambric',
+  'Jacquard', 'Voile', 'Linen', 'Khaddar', 'Karandi', 'Marina', 'Viscose',
+  'Wool', 'Tweed', 'Velvet', 'Pashmina', 'Chiffon', 'Organza', 'Silk',
+  'Net', 'Georgette', 'Jamawar', 'Tissue', 'Satin']
+
+// v0.14.2: Design Type dropdown
+const DESIGN_TYPES = ['', 'Digital Print', 'Block Print', 'Screen Print',
+  'Machine Embroidery', 'Hand Embroidery', 'Chikankari', 'Zari/Tilla Work',
+  'Solid Plain', 'Self-Texture']
+
+// v0.14.2: Gender dropdown
+const GENDERS = ['', 'Ladies', 'Gents', 'Kids']
 
 export default function Catalog() {
   const { products, fetchProducts, addProduct, updateProduct, deleteProduct,
@@ -41,6 +56,9 @@ export default function Catalog() {
   const [color, setColor] = useState('')
   const [design, setDesign] = useState('')
   const [season, setSeason] = useState('')
+  const [fabric, setFabric] = useState('')
+  const [designType, setDesignType] = useState('')
+  const [gender, setGender] = useState('')
   const [costPrice, setCostPrice] = useState(0)
   const [salePrice, setSalePrice] = useState(0)
   const [purchasePrice, setPurchasePrice] = useState(0)
@@ -199,7 +217,8 @@ export default function Catalog() {
   const handleOpenAdd = async () => {
     setEditProduct(null)
     setProductCode(''); setName(''); setCategory(''); setColor(''); setDesign('')
-    setSeason(''); setCostPrice(0); setSalePrice(0); setPurchasePrice(0)
+    setSeason(''); setFabric(''); setDesignType(''); setGender('')
+    setCostPrice(0); setSalePrice(0); setPurchasePrice(0)
     setDescription(''); setTags(''); setStockQuantity(0); setStatus('active'); setImages([])
     setRetailPrice(0)
     // v0.13.7: Load agents instead of locations for Agent Stock section
@@ -214,7 +233,8 @@ export default function Catalog() {
     setEditProduct(p)
     setProductCode(p.sku || ''); setName(p.name)
     setCategory(p.category || ''); setColor(p.color || ''); setDesign(p.design || '')
-    setSeason(p.season || ''); setCostPrice(p.cost_price); setSalePrice(p.sale_price)
+    setSeason(p.season || ''); setFabric((p as any).fabric || ''); setDesignType(''); setGender('')
+    setCostPrice(p.cost_price); setSalePrice(p.sale_price)
     setPurchasePrice(p.purchase_price || p.cost_price)
     setRetailPrice((p as any).retail_price || p.sale_price)
     setDescription(p.description || ''); setTags(p.tags || '')
@@ -244,11 +264,14 @@ export default function Catalog() {
       color: color || undefined,
       design: design || undefined,
       season: season || undefined,
+      // v0.14.2: Save fabric, designType, gender
+      fabric: fabric || undefined,
+      // Store designType in tags if set (reuse existing column)
+      tags: [tags, designType, gender].filter(Boolean).join(', ') || undefined,
       cost_price: Number(costPrice),
       sale_price: Number(salePrice),
       purchase_price: Number(purchasePrice) || Number(costPrice),
       description: description || undefined,
-      tags: tags || undefined,
       stock_quantity: Number(stockQuantity),
       status,
       images: JSON.stringify(images),
@@ -672,9 +695,33 @@ export default function Catalog() {
                     className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Design</label>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Fabric</label>
+                  <select value={fabric} onChange={e => setFabric(e.target.value)}
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500">
+                    {FABRICS.map(f => <option key={f} value={f}>{f || '-- Select --'}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Design Type</label>
+                  <select value={designType} onChange={e => setDesignType(e.target.value)}
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500">
+                    {DESIGN_TYPES.map(d => <option key={d} value={d}>{d || '-- Select --'}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Gender</label>
+                  <select value={gender} onChange={e => setGender(e.target.value)}
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500">
+                    {GENDERS.map(g => <option key={g} value={g}>{g || '-- Select --'}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Brand/Design</label>
                   <input type="text" value={design} onChange={e => setDesign(e.target.value)}
-                    placeholder="Digital Print"
+                    placeholder="Nishat, Maria B, etc."
                     className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
                 </div>
                 <div>
