@@ -201,15 +201,23 @@ pub fn upsert_product_location(conn: &Connection, product_id: i64, location_id: 
 
 pub fn add_product(conn: &Connection, product: &Product) -> Result<i64, rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
+    // v0.14.3: Persist retail_price + brand + fabric to products table.
+    // Previously these v0.11.0+ columns were silently dropped by the INSERT
+    // (only 16 original columns written), so retail_price was never saved
+    // — Catalog form fell back to writing it as a `_product_retail_<id>`
+    // setting, which ShareCenter never read, so every product ended up with
+    // retail_price = sale_price (due to the legacy migration backfill) and
+    // every caption showed "Save Rs. 0!".
     conn.execute(
-        "INSERT INTO products (sku, name, category, color, design, season, cost_price, sale_price, purchase_price, description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
+        "INSERT INTO products (sku, name, category, color, design, season, cost_price, sale_price, purchase_price, description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at, retail_price, brand, fabric)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16, ?17, ?18, ?19)",
         rusqlite::params![
             &product.sku, &product.name, &product.category,
             &product.color, &product.design, &product.season,
             product.cost_price, product.sale_price, product.purchase_price,
             &product.description, &product.tags, product.stock_quantity,
             &product.status, &product.images, product.supplier_id, &now,
+            product.retail_price, &product.brand, &product.fabric,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -217,17 +225,22 @@ pub fn add_product(conn: &Connection, product: &Product) -> Result<i64, rusqlite
 
 pub fn update_product(conn: &Connection, product: &Product) -> Result<(), rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
+    // v0.14.3: Update retail_price + brand + fabric alongside the legacy
+    // 16 columns. See add_product() comment for full context.
     conn.execute(
         "UPDATE products SET sku=?1, name=?2, category=?3, color=?4, design=?5, season=?6,
          cost_price=?7, sale_price=?8, purchase_price=?9, description=?10, tags=?11, stock_quantity=?12,
-         status=?13, images=?14, supplier_id=?15, updated_at=?16 WHERE id=?17",
+         status=?13, images=?14, supplier_id=?15, updated_at=?16,
+         retail_price=?17, brand=?18, fabric=?19 WHERE id=?20",
         rusqlite::params![
             &product.sku, &product.name, &product.category,
             &product.color, &product.design, &product.season,
             product.cost_price, product.sale_price, product.purchase_price,
             &product.description, &product.tags, product.stock_quantity,
             &product.status, &product.images, product.supplier_id,
-            &now, product.id,
+            &now,
+            product.retail_price, &product.brand, &product.fabric,
+            product.id,
         ],
     )?;
     Ok(())

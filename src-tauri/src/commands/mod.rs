@@ -471,7 +471,9 @@ pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai:
         season: draft.season.clone(),
         cost_price: draft.cost_price.unwrap_or(0.0),
         sale_price: draft.sale_price.unwrap_or(0.0),
-        purchase_price: draft.retail_price.unwrap_or(0.0),
+        // v0.14.3: purchase_price is being phased out (removed from Catalog
+        // form UI). Default to cost_price for backward DB compat.
+        purchase_price: draft.cost_price.unwrap_or(0.0),
         description: draft.description.clone(),
         tags: draft.tags.clone().map(|t| t.join(", ")),
         stock_quantity: 0,
@@ -491,7 +493,9 @@ pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai:
         size_info: None,
         base_unit_cost: None,
         landed_unit_cost: None,
-        retail_price: None,
+        // v0.14.3: Persist retail_price from draft (was hardcoded to None —
+        // never made it to the products table even when add_product supported it).
+        retail_price: draft.retail_price,
         discount_price: None,
         source_trip_id: None,
         qty_in_head_office: None,

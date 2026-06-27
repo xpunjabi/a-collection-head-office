@@ -295,9 +295,20 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
         "UPDATE products SET qty_in_head_office = stock_quantity WHERE qty_in_head_office = 0 AND stock_quantity > 0",
         [],
     );
-    // Backfill retail_price from existing sale_price for legacy products.
+    // v0.14.3: REMOVED the `UPDATE products SET retail_price = sale_price`
+    // backfill that used to run here. That backfill was the silent killer of
+    // the "Save Rs. 0" bug — it overwrote every product's retail_price with
+    // its sale_price, so ShareCenter always computed Save = retail − sale = 0.
+    // Now retail_price stays NULL when not explicitly entered, and ShareCenter
+    // falls back to `sale_price * 1.2` for the discount display.
+    //
+    // v0.14.3: ALSO undo the damage — clear retail_price wherever it equals
+    // sale_price (the legacy backfill set them equal). This is idempotent:
+    // after this UPDATE the values differ (retail_price = NULL, sale_price
+    // unchanged), so it won't fire again on subsequent migrations. Products
+    // the user has explicitly given a distinct retail_price are preserved.
     let _ = conn.execute(
-        "UPDATE products SET retail_price = sale_price WHERE retail_price IS NULL AND sale_price IS NOT NULL",
+        "UPDATE products SET retail_price = NULL WHERE retail_price IS NOT NULL AND retail_price = sale_price",
         [],
     );
     // Backfill base_unit_cost from existing purchase_price (or cost_price) for legacy products.

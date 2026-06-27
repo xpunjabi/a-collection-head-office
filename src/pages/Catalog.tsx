@@ -61,7 +61,8 @@ export default function Catalog() {
   const [gender, setGender] = useState('')
   const [costPrice, setCostPrice] = useState(0)
   const [salePrice, setSalePrice] = useState(0)
-  const [purchasePrice, setPurchasePrice] = useState(0)
+  // v0.14.3: purchasePrice removed — was redundant with costPrice, never
+  // meaningfully used. Retail/sale/cost are the 3 prices that matter.
   const [retailPrice, setRetailPrice] = useState(0)
   const [description, setDescription] = useState('')
   const [tags, setTags] = useState('')
@@ -218,9 +219,8 @@ export default function Catalog() {
     setEditProduct(null)
     setProductCode(''); setName(''); setCategory(''); setColor(''); setDesign('')
     setSeason(''); setFabric(''); setDesignType(''); setGender('')
-    setCostPrice(0); setSalePrice(0); setPurchasePrice(0)
+    setCostPrice(0); setSalePrice(0); setRetailPrice(0)
     setDescription(''); setTags(''); setStockQuantity(0); setStatus('active'); setImages([])
-    setRetailPrice(0)
     // v0.13.7: Load agents instead of locations for Agent Stock section
     try {
       const agents: any[] = await invoke('get_agents')
@@ -235,8 +235,12 @@ export default function Catalog() {
     setCategory(p.category || ''); setColor(p.color || ''); setDesign(p.design || '')
     setSeason(p.season || ''); setFabric((p as any).fabric || ''); setDesignType(''); setGender('')
     setCostPrice(p.cost_price); setSalePrice(p.sale_price)
-    setPurchasePrice(p.purchase_price || p.cost_price)
-    setRetailPrice((p as any).retail_price || p.sale_price)
+    // v0.14.3: Don't fall back to sale_price for retail_price — that was
+    // the cause of the recurring "Save Rs. 0" bug. If retail_price is
+    // null/0 in DB, leave the field empty (0) so user can enter a real
+    // value. ShareCenter's JS fallback (sale_price * 1.2) handles the
+    // display side until the user enters an explicit retail price.
+    setRetailPrice((p as any).retail_price || 0)
     setDescription(p.description || ''); setTags(p.tags || '')
     setStockQuantity(p.stock_quantity); setStatus(p.status)
     try { setImages(JSON.parse(p.images || '[]')) } catch { setImages([]) }
@@ -270,13 +274,24 @@ export default function Catalog() {
       tags: [tags, designType, gender].filter(Boolean).join(', ') || undefined,
       cost_price: Number(costPrice),
       sale_price: Number(salePrice),
-      purchase_price: Number(purchasePrice) || Number(costPrice),
+      // v0.14.3: purchase_price removed from form — keep cost_price as the
+      // value for the legacy DB column (still in schema for backward compat).
+      purchase_price: Number(costPrice),
       description: description || undefined,
       stock_quantity: Number(stockQuantity),
       status,
       images: JSON.stringify(images),
       created_at: editProduct?.created_at,
       updated_at: editProduct?.updated_at,
+      // v0.14.3: retail_price now persisted directly to products table via
+      // add_product/update_product (Rust side updated in this version).
+      // Removed the `update_setting({ key: '_product_retail_<id>' })` hack
+      // that wrote to the settings table — ShareCenter never read it from
+      // there, so retail_price always came back as null/0 from get_products.
+      // Use 0 → undefined so SQLite stores NULL (not 0) when user leaves it
+      // blank, letting ShareCenter's `sale_price * 1.2` fallback kick in.
+      retail_price: retailPrice > 0 ? Number(retailPrice) : undefined,
+      brand: editProduct?.brand,
     }
 
     try {
@@ -287,12 +302,6 @@ export default function Catalog() {
       } else {
         productId = await addProduct(productData) as unknown as number
       }
-      // v0.13.7: Save retail_price via update_setting-style direct DB update
-      // (product table already has retail_price column from v0.11.0 migration)
-      try {
-        await invoke('update_setting', { key: `_product_retail_${productId}`, value: String(retailPrice) })
-      } catch { /* non-critical */ }
-
       // v0.13.7: Agent stock — only send stock if quantity > 0 AND it's a new product
       // (for existing products, stock is managed via Agents tab → Send Stock)
       if (!editProduct?.id) {
@@ -751,18 +760,11 @@ export default function Catalog() {
                 </div>
               </div>
 
-              {/* Total Stock (HO) */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Total Stock (Head Office)</label>
-                  <input type="number" value={stockQuantity} onChange={e => setStockQuantity(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Purchase Price (Rs)</label>
-                  <input type="number" step="1" value={purchasePrice} onChange={e => setPurchasePrice(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
-                </div>
+              {/* Total Stock (HO) — v0.14.3: full-width now that Purchase Price field is removed */}
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Total Stock (Head Office)</label>
+                <input type="number" value={stockQuantity} onChange={e => setStockQuantity(Number(e.target.value))}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
               </div>
 
               {/* Agent Stock (v0.13.7: replaces Location Stock) */}
