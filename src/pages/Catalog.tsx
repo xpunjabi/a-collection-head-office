@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useCallback } from 'react'
 import { useAppStore, Product } from '../stores/store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
@@ -304,6 +304,62 @@ export default function Catalog() {
       }
     } catch (err) { console.error(err) }
   }
+
+  // v0.14.0: Paste image from clipboard (Ctrl+V) in Catalog form
+  const handlePasteImage = useCallback(async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (!file) continue
+        // Convert to base64
+        const reader = new FileReader()
+        reader.onload = async () => {
+          const base64 = reader.result as string
+          // Strip data URI prefix
+          const cleanBase64 = base64.includes(',') ? base64.split(',')[1] : base64
+          try {
+            const savedName = await invoke<string>('save_base64_image', {
+              base64Data: cleanBase64,
+              formatType: 'thumbnail',
+            })
+            setImages(prev => [...prev, savedName])
+          } catch (err) {
+            alert(`Failed to save pasted image: ${err}`)
+          }
+        }
+        reader.readAsDataURL(file)
+        return
+      }
+    }
+  }, [])
+
+  // v0.14.0: Drag-drop image into Catalog form
+  const handleImageDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    const files = e.dataTransfer?.files
+    if (!files || files.length === 0) return
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith('image/')) continue
+      const reader = new FileReader()
+      reader.onload = async () => {
+        const base64 = reader.result as string
+        const cleanBase64 = base64.includes(',') ? base64.split(',')[1] : base64
+        try {
+          const savedName = await invoke<string>('save_base64_image', {
+            base64Data: cleanBase64,
+            formatType: 'thumbnail',
+          })
+          setImages(prev => [...prev, savedName])
+        } catch (err) {
+          alert(`Failed to save dropped image: ${err}`)
+        }
+      }
+      reader.readAsDataURL(file)
+    }
+  }, [])
 
   const handleRemoveImage = (index: number) => setImages(images.filter((_, i) => i !== index))
 
@@ -693,9 +749,15 @@ export default function Catalog() {
                   className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
               </div>
 
-              {/* Images */}
-              <div>
-                <label className="block text-xs font-semibold uppercase text-gray-400 mb-2">Images</label>
+              {/* Images — v0.14.0: clipboard paste + drag-drop + file picker */}
+              <div
+                onPaste={handlePasteImage}
+                onDrop={handleImageDrop}
+                onDragOver={(e) => e.preventDefault()}
+              >
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-2">
+                  Images (Ctrl+V to paste, drag-drop, or click +)
+                </label>
                 <div className="flex flex-wrap gap-2">
                   {images.map((imgName, idx) => (
                     <div key={idx} className="relative w-14 h-14 bg-slate-950 border border-gray-800 rounded-lg overflow-hidden flex items-center justify-center">
@@ -705,10 +767,11 @@ export default function Catalog() {
                     </div>
                   ))}
                   <button type="button" onClick={handleSelectImage}
-                    className="w-14 h-14 bg-slate-950 hover:bg-slate-900 border border-dashed border-gray-800 hover:border-violet-500 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:text-violet-400">
+                    className="w-14 h-14 bg-slate-950 hover:bg-slate-900 border border-dashed border-gray-800 hover:border-violet-500 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:text-violet-400 transition-colors">
                     <Plus size={14} /><span className="text-[8px]">Photo</span>
                   </button>
                 </div>
+                <p className="text-[10px] text-gray-600 mt-1">Tip: Screenshot lo (Print Screen), phir yahan Ctrl+V paste karo</p>
               </div>
 
               <div className="flex justify-end space-x-2 pt-3 border-t border-gray-800">
