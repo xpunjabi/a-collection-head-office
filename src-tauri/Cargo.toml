@@ -1,6 +1,6 @@
 [package]
 name = "a-collection-head-office"
-version = "0.14.4"
+version = "0.14.5"
 description = "Local-first AI-assisted business OS"
 edition = "2021"
 
@@ -12,6 +12,12 @@ tauri = { version = "2.0.3", features = [] }
 tauri-plugin-shell = "2.0.1"
 tauri-plugin-dialog = "2.0.1"
 tauri-plugin-fs = "2.0.1"
+# v0.14.5: Clipboard manager for sharing product images to social platforms.
+# Browser/Tauri-Web APIs can auto-attach text to share URLs (wa.me, FB
+# sharer, etc.) but cannot attach images. We work around this by writing
+# the product image to the system clipboard (writeImage) so the user can
+# Ctrl+V paste it directly into Facebook/WhatsApp/Instagram post composers.
+tauri-plugin-clipboard-manager = "2.0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rusqlite = { version = "0.31.0", features = ["bundled"] }

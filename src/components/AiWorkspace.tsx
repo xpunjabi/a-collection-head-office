@@ -116,6 +116,13 @@ export default function AiWorkspace() {
         retail_price: edits?.retail_price ? Number(edits.retail_price) : draft.retail_price,
         sale_price: edits?.sale_price ? Number(edits.sale_price) : draft.sale_price,
         saved_image_filename: savedImage || undefined,
+        // v0.14.5: Pass through catalog metadata fields so the AI-generated
+        // category/season/gender/color reach the products table via
+        // save_catalog_draft (Rust side updated to persist these).
+        category: draft.category || undefined,
+        season: draft.season || undefined,
+        gender: draft.gender || undefined,
+        color: draft.color || undefined,
       }
 
       // Debug: log what we're sending
@@ -492,6 +499,26 @@ export default function AiWorkspace() {
                                   className="bg-slate-950 border border-violet-500/30 rounded px-1 py-0.5 text-xs text-gray-200 w-full mt-0.5" />
                               ) : (
                                 <span>{msg.fast_path_data.data.design_code}</span>
+                              )}
+                            </div>
+                          )}
+                          {/* v0.14.5: Display AI-generated catalog metadata.
+                              Read-only here — full editing happens in the
+                              Catalog form after "Add to Catalog". Shown only
+                              when at least one of the four fields is set. */}
+                          {!isEditing && (msg.fast_path_data.data.category || msg.fast_path_data.data.season || msg.fast_path_data.data.gender || msg.fast_path_data.data.color) && (
+                            <div className="flex flex-wrap gap-1 mt-1 text-[10px]">
+                              {msg.fast_path_data.data.category && (
+                                <span className="px-1.5 py-0.5 rounded bg-violet-900/40 text-violet-300 border border-violet-700/30">{msg.fast_path_data.data.category}</span>
+                              )}
+                              {msg.fast_path_data.data.gender && (
+                                <span className="px-1.5 py-0.5 rounded bg-pink-900/40 text-pink-300 border border-pink-700/30">{msg.fast_path_data.data.gender}</span>
+                              )}
+                              {msg.fast_path_data.data.season && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-700/30">{msg.fast_path_data.data.season}</span>
+                              )}
+                              {msg.fast_path_data.data.color && (
+                                <span className="px-1.5 py-0.5 rounded bg-slate-800 text-gray-300 border border-gray-700">{msg.fast_path_data.data.color}</span>
                               )}
                             </div>
                           )}

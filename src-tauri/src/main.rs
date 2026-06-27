@@ -24,6 +24,11 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        // v0.14.5: Clipboard manager for image sharing. Lets the frontend
+        // call writeImage(bytes) to put a product image on the system
+        // clipboard, so the user can paste it into FB/IG/WhatsApp post
+        // composers after we open the share URL.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(DbState(tauri::async_runtime::Mutex::new(conn)))
         .setup(move |app| {
             let app_handle = app.handle().clone();

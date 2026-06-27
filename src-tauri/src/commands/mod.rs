@@ -593,14 +593,26 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
     if let Some(ref fabric) = draft.fabric {
         if !fabric.is_empty() { tags.push(format!("Fabric: {}", fabric)); }
     }
+    // v0.14.5: Store gender in tags (no dedicated products.gender column —
+    // matches the Catalog.tsx handleSave pattern that also puts designType +
+    // gender in tags to avoid a schema migration).
+    if let Some(ref gender) = draft.gender {
+        if !gender.is_empty() { tags.push(gender.clone()); }
+    }
     let product = crate::catalog::Product {
         id: None,
         sku: draft.design_code.clone().unwrap_or_default(),
         name: draft.title,
-        category: None,
-        color: None,
+        // v0.14.5: Pass through AI-generated catalog metadata fields.
+        // Previously these were hardcoded to None — when user clicked
+        // "Add to Catalog", the resulting product row had empty category,
+        // color, season, gender. Now the AI's draft values flow through
+        // directly and the user can edit them in the Catalog form if
+        // needed.
+        category: draft.category.clone(),
+        color: draft.color.clone(),
         design: draft.brand.clone(),
-        season: None,
+        season: draft.season.clone(),
         // v0.13.8: Save actual prices from draft (was hardcoded to 0.0)
         cost_price: draft.cost_price.unwrap_or(0.0),
         sale_price: draft.sale_price.unwrap_or(0.0),

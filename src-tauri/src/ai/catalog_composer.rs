@@ -25,6 +25,24 @@ pub struct CatalogDraft {
     // trying to download from best_image_url.
     #[serde(default)]
     pub saved_image_filename: Option<String>,
+    // v0.14.5: Catalog metadata fields. Previously the AI draft only
+    // carried title/brand/fabric/notes — when the user clicked "Add to
+    // Catalog", the resulting product row had empty category, season,
+    // gender, color, forcing them to manually fill these in the Catalog
+    // form. Now the AI generates these directly from the image + OCR.
+    // Values must match the dropdown options in Catalog.tsx:
+    //   category: '3 Piece' | '2 Piece' | 'Cut Piece' | 'Gents'
+    //   season:   'Summer' | 'Winter' | 'Eid Special' | 'Festive' | 'Spring' | 'Autumn'
+    //   gender:   'Ladies' | 'Gents' | 'Kids'
+    //   color:    free-form text (e.g. 'Maroon', 'Bottle Green')
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub season: Option<String>,
+    #[serde(default)]
+    pub gender: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 pub async fn generate_catalog_draft(
@@ -67,7 +85,16 @@ Return ONLY valid JSON without any markdown formatting, code blocks, or extra te
 
     system_prompt.push_str("\n\nRespond with this exact JSON structure (no markdown, no explanation):\n\
 {\"title\": \"...\", \"brand\": \"... or null\", \"fabric\": \"... or null\", \
-\"design_code\": \"... or null\", \"notes\": \"... or null\", \"best_image_url\": \"... or null\"}");
+\"design_code\": \"... or null\", \"notes\": \"... or null\", \"best_image_url\": \"... or null\", \
+\"category\": \"... or null\", \"season\": \"... or null\", \"gender\": \"... or null\", \"color\": \"... or null\", \
+\"cost_price\": 0.0, \"retail_price\": 0.0, \"sale_price\": 0.0}\n\n\
+FIELD RULES:\n\
+- category: MUST be one of: \"3 Piece\", \"2 Piece\", \"Cut Piece\", \"Gents\". Pick the closest match for the product.\n\
+- season: One of: \"Summer\", \"Winter\", \"Eid Special\", \"Festive\", \"Spring\", \"Autumn\". If unclear, pick the most likely.\n\
+- gender: One of: \"Ladies\", \"Gents\", \"Kids\". Infer from the product image + OCR.\n\
+- color: A short color name like \"Maroon\", \"Bottle Green\", \"Royal Blue\". Infer from the image.\n\
+- prices: cost_price is what the shopkeeper paid; retail_price is the suggested MRP; sale_price is the actual selling price. If unknown, set to 0.\n\
+- title: A descriptive product name (brand + fabric + design + piece-count, e.g. \"Nishat 3-Piece Lawn Suit - Maroon Floral\").");
 
     let mut user_prompt = String::from("Generate a product catalog entry from the following extracted data:\n");
     if let Some(ref qr) = extraction.qr_data {

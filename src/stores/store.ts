@@ -149,6 +149,14 @@ export interface CatalogDraft {
   sale_price?: number;
   // v0.13.9: Locally saved image filename (from user upload)
   saved_image_filename?: string;
+  // v0.14.5: Catalog metadata fields. AI generates these from the product
+  // image + OCR + web evidence so they flow through to the products table
+  // when the user clicks "Add to Catalog" — previously they were always
+  // empty and the user had to fill them manually in the Catalog form.
+  category?: string;
+  season?: string;
+  gender?: string;
+  color?: string;
 }
 
 export type AssistantResult =

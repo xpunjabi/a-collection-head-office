@@ -649,23 +649,17 @@ fn seed_initial_data(conn: &mut Connection) -> Result<()> {
         }
     }
 
-    let prod_count: i64 = conn.query_row("SELECT COUNT(*) FROM products", [], |r| r.get(0))?;
-    if prod_count == 0 {
-        let now = chrono::Utc::now().to_rfc3339();
-        let dummy = [
-            ("AC-2026-001", "Designer Linen Kurta", "3 Piece", 12.50, 29.99, "Premium linen kurta", "linen,kurta", 45, "active", "[]", "Bottle Green", "Embroidered", "summer", ""),
-            ("AC-2026-002", "Casual Cotton Shirt", "Gents Cotton", 8.00, 19.99, "Classic fit cotton shirt", "cotton,shirt", 12, "active", "[]", "White", "Plain", "summer", ""),
-            ("AC-2026-003", "Slim Fit Denim", "Gents Washing", 15.00, 39.99, "Blue denim jeans", "denim,pants", 5, "active", "[]", "Blue", "Slim Fit", "winter", ""),
-            ("AC-2026-004", "Embroidered Lawn Suit", "3 Piece Lawn", 22.00, 49.99, "Beautiful embroidered lawn suit", "lawn,embroidered", 2, "active", "[]", "Red", "Digital Print", "summer", ""),
-        ];
-        for (code, name, cat, cost, sale, desc, tags, qty, status, img, color, design, season, _) in dummy.iter() {
-            conn.execute(
-                "INSERT INTO products (sku, product_code, name, category, color, design, season, cost_price, sale_price, purchase_price, description, tags, stock_quantity, status, images, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?8, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
-                (code, code, name, cat, color, design, season, cost, sale, desc, tags, qty, status, img, &now),
-            )?;
-        }
-    }
+    // v0.14.5: REMOVED dummy product seeding entirely.
+    // Previously, whenever the products table was empty (count == 0), this
+    // block inserted 4 hardcoded products (Designer Linen Kurta, Casual
+    // Cotton Shirt, Slim Fit Denim, Embroidered Lawn Suit). The user
+    // reported that deleting these and restarting the app brought them
+    // back — because the delete left the table empty, and the seed fired
+    // again on next startup. Now the catalog starts genuinely empty on
+    // fresh installs. The user creates every product themselves.
+    //
+    // NOTE: this also fixes the "weak delete system" perception — deletes
+    // were working correctly, but the seeder was undoing them on restart.
 
     let cust_count: i64 = conn.query_row("SELECT COUNT(*) FROM customers", [], |r| r.get(0))?;
     if cust_count == 0 {
