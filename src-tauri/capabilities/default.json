@@ -21,7 +21,10 @@
         { "url": "https://twitter.com/*" },
         { "url": "https://x.com/*" },
         { "url": "https://www.instagram.com/*" },
-        { "url": "https://instagram.com/*" }
+        { "url": "https://instagram.com/*" },
+        { "path": "$DOWNLOAD/*" },
+        { "path": "$DESKTOP/*" },
+        { "path": "$HOME/*" }
       ]
     }
   ]

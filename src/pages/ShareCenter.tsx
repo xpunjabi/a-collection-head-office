@@ -735,7 +735,26 @@ Write in Hinglish. Return ONLY the JSON.`
                         className="w-full bg-black/30 border border-violet-500/30 rounded p-2 text-xs text-gray-200 focus:outline-none focus:border-violet-500"
                       />
                     ) : (
-                      <p className="text-xs text-gray-300 whitespace-pre-wrap bg-black/20 rounded p-2 max-h-32 overflow-y-auto">{caption}</p>
+                      <div className="flex gap-2 bg-black/20 rounded p-2">
+                        {/* v0.14.7: Show product image thumbnail next to caption
+                            so user sees exactly what will be shared to this platform.
+                            Previously caption cards were text-only — user couldn't
+                            see the image that would accompany the post. */}
+                        {(() => {
+                          try {
+                            const imgs: string[] = JSON.parse(selectedProduct?.images || '[]')
+                            if (imgs.length > 0 && imgs[0]) {
+                              return (
+                                <div className="w-16 h-16 shrink-0 bg-slate-900 rounded border border-gray-800 overflow-hidden flex items-center justify-center">
+                                  <ProductImage filename={imgs[0]} alt="" className="object-contain w-full h-full" />
+                                </div>
+                              )
+                            }
+                          } catch {}
+                          return null
+                        })()}
+                        <p className="text-xs text-gray-300 whitespace-pre-wrap flex-1 max-h-32 overflow-y-auto">{caption}</p>
+                      </div>
                     )
                   ) : (
                     <p className="text-xs text-gray-600 italic py-2">Not generated yet. Click "AI" to generate.</p>
