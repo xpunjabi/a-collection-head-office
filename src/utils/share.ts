@@ -128,34 +128,26 @@ export async function shareToPlatform(
   const encoded = encodeURIComponent(text)
   let url = ''
 
-  // v0.14.7: Save image to Downloads, then OPEN it in the OS default
-  // image viewer (Windows Photos). This puts the image ON SCREEN — user
-  // doesn't need to hunt through folders. They drag from Photos to the
-  // browser window that opens next.
+  // v0.14.8: Save image to a dedicated folder AND open Windows Explorer
+  // with the file highlighted (done in Rust via explorer.exe /select).
+  // The user sees Explorer window with their image already selected —
+  // they just drag it to the browser. No folder-hunting, no Photos app
+  // dependency (which was unreliable on Windows 10).
   let savedImagePath: string | null = null
-  let imageOpenedInViewer = false
+  let explorerOpened = false
   if (imageData && IS_TAURI) {
-    // Step 1: Save image to Downloads
     try {
       const { invoke } = await import('@tauri-apps/api/core')
       savedImagePath = await invoke<string>('save_image_for_share', {
         base64Data: imageData,
         productName: productName || 'product',
       })
-      console.log('[share] Image saved:', savedImagePath)
-
-      // Step 2: Open the saved image in the OS default viewer (Windows Photos)
-      // tauri-plugin-shell's open() opens files with their default application
-      try {
-        const { open } = await import('@tauri-apps/plugin-shell')
-        await open(savedImagePath)
-        imageOpenedInViewer = true
-        console.log('[share] Image opened in default viewer')
-      } catch (err) {
-        console.warn('[share] Could not open image in viewer:', err)
-      }
+      // If invoke succeeded, the Rust side already opened Explorer.
+      // (explorer.exe /select,<path> is called from Rust on Windows)
+      explorerOpened = true
+      console.log('[share] Image saved + Explorer opened:', savedImagePath)
     } catch (err) {
-      console.warn('[share] Could not save image:', err)
+      console.warn('[share] Could not save image / open Explorer:', err)
     }
   }
 
@@ -169,21 +161,24 @@ export async function shareToPlatform(
     // Clipboard writeText might fail in some Tauri contexts
   }
 
-  // Build a SHORT, clear alert. No folder-hunting instructions — just
-  // "image is open on screen, drag it to the browser".
+  // Build a SHORT, clear alert. v0.14.8: Explorer is already open with
+  // the image selected — user just drags from Explorer to browser.
   const buildAlertMsg = (platformName: string): string => {
     let msg = `${platformName} opening now!\n\n`
-    if (imageOpenedInViewer) {
-      msg += `📷 Product image Photos app me open ho gayi hai (screen pe dikhegi).\n`
+    if (explorerOpened && savedImagePath) {
+      // Extract just the filename for display
+      const filename = savedImagePath.split(/[\\/]/).pop() || savedImagePath
+      msg += `📁 Windows Explorer open ho gaya hai — image select hai:\n`
+      msg += `   ${filename}\n\n`
       msg += `📋 Caption clipboard pe copy ho gaya hai.\n\n`
       msg += `${platformName} pe:\n`
       msg += `1. Text box me Ctrl+V → caption paste ho jayegi\n`
-      msg += `2. Image ko Photos app se drag karke post me drop karein\n\n`
-      msg += `(Dono windows screen pe hain — bas drag karein)\n`
+      msg += `2. Explorer me select ki hui image ko drag karke post me drop karein\n\n`
+      msg += `(Dono windows screen pe hain — Explorer se browser me drag karein)\n`
     } else if (savedImagePath) {
-      // Image saved but couldn't open in viewer — fall back to folder path
+      // Image saved but Explorer didn't open — fall back to folder path
       const filename = savedImagePath.split(/[\\/]/).pop() || savedImagePath
-      const folder = savedImagePath.split(/[\\/]/).slice(-2, -1)[0] || 'Downloads'
+      const folder = savedImagePath.split(/[\\/]/).slice(-2, -1)[0] || 'A-Collection-Share'
       msg += `📷 Image saved: ${folder}\\${filename}\n`
       msg += `📋 Caption clipboard pe hai.\n\n`
       msg += `${platformName} pe:\n`

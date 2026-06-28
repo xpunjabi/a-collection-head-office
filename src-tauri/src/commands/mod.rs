@@ -156,16 +156,20 @@ pub async fn save_base64_image(base64_data: String, format_type: String) -> Resu
         .map_err(|e| e.to_string())
 }
 
-/// v0.14.6: Save a product image to the user's Downloads folder (or Desktop
-/// as fallback) with a descriptive filename, so the user can easily find it
-/// and drag-drop into Facebook/Instagram/WhatsApp post composers.
+/// v0.14.8: Save a product image to a dedicated temp folder
+/// (%LOCALAPPDATA%\A-Collection-Share\) and immediately open Windows
+/// Explorer with the file highlighted/selected. The user can then drag
+/// the highlighted file directly into Facebook/Instagram/WhatsApp post
+/// composers — universally supported, 100% reliable on Windows.
 ///
-/// Browser clipboard image paste is unreliable on FB/IG web composers
-/// (especially in Firefox/Edge). Drag-drop from a known file location is
-/// universally supported. This command saves the image to Downloads with
-/// a filename like "A-Collection_Unstitched-3-Piece_20260627-133000.jpg"
-/// and returns the full file path so the frontend can display it to the
-/// user in the alert message.
+/// v0.14.7 history: previously used tauri-plugin-shell open(path) which
+/// tried to open the image in Windows Photos app. This was unreliable
+/// (Photos app sometimes failed to launch, especially on Windows 10 with
+/// custom configurations). The new approach uses explorer.exe /select
+/// which ALWAYS works — it opens the folder containing the image and
+/// selects it, no app association required.
+///
+/// Returns the full file path so frontend can display it in the alert.
 #[tauri::command]
 pub async fn save_image_for_share(
     base64_data: String,
@@ -176,11 +180,19 @@ pub async fn save_image_for_share(
         .decode(&base64_data)
         .map_err(|e| format!("Base64 decode error: {}", e))?;
 
-    // Pick target directory: Downloads > Desktop > home dir
-    let target_dir = dirs::download_dir()
-        .or_else(|| dirs::desktop_dir())
-        .or_else(|| dirs::home_dir())
-        .ok_or_else(|| "Could not find a suitable directory to save image".to_string())?;
+    // v0.14.8: Use a dedicated folder in LocalAppData instead of Downloads.
+    // Reasons:
+    //   1. Keeps user's Downloads folder clean (no share images cluttering)
+    //   2. LocalAppData is always writable on Windows
+    //   3. Path is predictable: %LOCALAPPDATA%\A-Collection-Share\
+    //   4. User doesn't need to find the file — Explorer opens to it
+    let target_dir = dirs::data_local_dir()
+        .ok_or_else(|| "Could not find LocalAppData directory".to_string())?
+        .join("A-Collection-Share");
+
+    // Create the folder if it doesn't exist
+    std::fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("Could not create share folder: {}", e))?;
 
     // Sanitize product name for filename: replace spaces/special chars with hyphens
     let safe_name: String = product_name
@@ -206,6 +218,25 @@ pub async fn save_image_for_share(
         .map_err(|e| format!("Image decode error: {}", e))?;
     img.save_with_format(&file_path, image::ImageFormat::Jpeg)
         .map_err(|e| format!("Image save error: {}", e))?;
+
+    // v0.14.8: Open Windows Explorer with the file highlighted.
+    // `explorer.exe /select,"C:\path\to\file.jpg"` is the canonical Windows
+    // way to open a folder and pre-select a file. Always works, no app
+    // association needed (unlike shell.open which tries to launch the
+    // default image viewer).
+    //
+    // On non-Windows platforms this is a no-op (the file is still saved,
+    // user can find it manually). The Tauri app is Windows-only per the
+    // release workflow, so this is acceptable.
+    #[cfg(target_os = "windows")]
+    {
+        let path_str = file_path.to_string_lossy().to_string();
+        let select_arg = format!("/select,{}", path_str);
+        std::process::Command::new("explorer.exe")
+            .arg(&select_arg)
+            .spawn()
+            .map_err(|e| format!("Could not open Explorer: {}", e))?;
+    }
 
     // Return the full path as a string so frontend can show it to the user
     Ok(file_path.to_string_lossy().to_string())
