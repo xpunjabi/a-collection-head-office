@@ -176,8 +176,23 @@ pub async fn save_image_for_share(
     product_name: String,
 ) -> Result<String, String> {
     use base64::Engine as _;
+    // v0.14.9: Strip data URI prefix if present. The get_image_as_base64
+    // command returns "data:image/jpeg;base64,/9j/..." — the prefix must
+    // be removed before base64 decoding, otherwise decode fails with
+    // "InvalidByte" error. This was THE bug causing v0.14.6/7/8 to show
+    // "Image save nahi ho payi" alert — the Rust command was throwing
+    // a base64 decode error on every call.
+    let clean_base64: &str = if base64_data.starts_with("data:") {
+        if let Some(idx) = base64_data.find(',') {
+            &base64_data[idx + 1..]
+        } else {
+            &base64_data
+        }
+    } else {
+        &base64_data
+    };
     let raw = base64::engine::general_purpose::STANDARD
-        .decode(&base64_data)
+        .decode(clean_base64)
         .map_err(|e| format!("Base64 decode error: {}", e))?;
 
     // v0.14.8: Use a dedicated folder in LocalAppData instead of Downloads.
