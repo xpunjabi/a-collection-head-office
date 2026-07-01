@@ -332,13 +332,16 @@ fn validate_catalog(
 
     for product in &catalog.products {
         let name = &product.name;
-        let display_name = if name.is_empty() { "(unnamed product)".to_string() } else { name.clone() };
+        // v0.16.1: Use a fresh clone for each push to avoid "use of moved value"
+        let display_name = || -> String {
+            if name.is_empty() { "(unnamed product)".to_string() } else { name.clone() }
+        };
 
         // ERROR: Empty name
         if name.trim().is_empty() {
             errors.push(CatalogError {
                 product_id: product.id,
-                product_name: display_name,
+                product_name: display_name(),
                 issue: "Product name is empty.".to_string(),
             });
         }
@@ -347,7 +350,7 @@ fn validate_catalog(
         if product.sale_price <= 0.0 {
             errors.push(CatalogError {
                 product_id: product.id,
-                product_name: display_name,
+                product_name: display_name(),
                 issue: "Sale price is 0 or negative. Customers won't know the cost.".to_string(),
             });
         }
@@ -358,7 +361,7 @@ fn validate_catalog(
                 if let Some(_prev_id) = seen_skus.get(sku) {
                     errors.push(CatalogError {
                         product_id: product.id,
-                        product_name: display_name,
+                        product_name: display_name(),
                         issue: format!("Duplicate SKU '{}'. Each product must have a unique SKU.", sku),
                     });
                 } else {
@@ -371,7 +374,7 @@ fn validate_catalog(
         if product.images.is_empty() {
             warnings.push(CatalogWarning {
                 product_id: product.id,
-                product_name: display_name,
+                product_name: display_name(),
                 issue: "No product image — will show placeholder on catalog.".to_string(),
                 severity: "warning".to_string(),
             });
@@ -383,7 +386,7 @@ fn validate_catalog(
                     if !path.exists() {
                         warnings.push(CatalogWarning {
                             product_id: product.id,
-                            product_name: display_name,
+                            product_name: display_name(),
                             issue: format!("Image file '{}' not found on disk.", img),
                             severity: "warning".to_string(),
                         });
@@ -396,7 +399,7 @@ fn validate_catalog(
         if product.category.as_ref().map_or(true, |c| c.trim().is_empty()) {
             warnings.push(CatalogWarning {
                 product_id: product.id,
-                product_name: display_name,
+                product_name: display_name(),
                 issue: "No category set — customers can't filter by category.".to_string(),
                 severity: "info".to_string(),
             });
@@ -406,7 +409,7 @@ fn validate_catalog(
         if product.description.as_ref().map_or(true, |d| d.trim().is_empty()) {
             warnings.push(CatalogWarning {
                 product_id: product.id,
-                product_name: display_name,
+                product_name: display_name(),
                 issue: "No description — customers see less product info.".to_string(),
                 severity: "info".to_string(),
             });
@@ -417,7 +420,7 @@ fn validate_catalog(
             if retail > 0.0 && retail < product.sale_price {
                 warnings.push(CatalogWarning {
                     product_id: product.id,
-                    product_name: display_name,
+                    product_name: display_name(),
                     issue: format!("Retail price (Rs. {:.0}) is less than sale price (Rs. {:.0}). Discount will show negative.", retail, product.sale_price),
                     severity: "warning".to_string(),
                 });
