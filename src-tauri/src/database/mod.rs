@@ -263,6 +263,22 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
         FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
     );", [])?;
 
+    // v0.16.0: catalog_publish_history — log of every publish operation.
+    // Useful for debugging and showing "last published" status in UI.
+    conn.execute("CREATE TABLE IF NOT EXISTS catalog_publish_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        published_at TEXT NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        products_count INTEGER NOT NULL,
+        images_uploaded INTEGER NOT NULL,
+        images_deleted INTEGER NOT NULL,
+        success INTEGER NOT NULL,
+        catalog_version TEXT,
+        error_message TEXT,
+        warnings_count INTEGER DEFAULT 0,
+        errors_count INTEGER DEFAULT 0
+    );", [])?;
+
     // --- sales: replaces orders table (single sales concept) ---
     // sale_channel enum: head_office | whatsapp | facebook | instagram |
     //                    tiktok | agent

@@ -98,6 +98,8 @@ export default function Catalog() {
   const [publishPreview, setPublishPreview] = useState<any>(null)
   const [publishing, setPublishing] = useState(false)
   const [publishResult, setPublishResult] = useState<any>(null)
+  // v0.16.0: Force-publish even if errors exist
+  const [forcePublish, setForcePublish] = useState(false)
 
   useEffect(() => { fetchProducts() }, [])
 
@@ -1038,7 +1040,7 @@ export default function Catalog() {
                 className="text-gray-400 hover:text-white disabled:opacity-50"
               ><X size={20} /></button>
             </div>
-            <div className="p-5 space-y-3">
+            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
               <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 space-y-2 text-sm">
                 <div className="flex justify-between"><span className="text-gray-400">Brand:</span><span className="text-white font-medium">{publishPreview.brand}</span></div>
                 <div className="flex justify-between"><span className="text-gray-400">Products:</span><span className="text-white font-bold">{publishPreview.product_count}</span></div>
@@ -1049,6 +1051,50 @@ export default function Catalog() {
                 </div>
                 <div className="flex justify-between"><span className="text-gray-400">URL:</span><span className="text-emerald-400 text-xs font-mono truncate ml-2">{publishPreview.catalog_url}</span></div>
               </div>
+
+              {/* v0.16.0: Validation errors */}
+              {publishPreview.errors && publishPreview.errors.length > 0 && (
+                <div className="bg-red-950/30 border border-red-800/40 rounded-lg p-3">
+                  <p className="text-xs text-red-300 font-bold mb-2">
+                    ❌ Errors ({publishPreview.errors.length}) — fix these before publishing:
+                  </p>
+                  <ul className="text-xs text-red-200 space-y-1 max-h-32 overflow-y-auto">
+                    {publishPreview.errors.map((err: any, i: number) => (
+                      <li key={i} className="flex gap-2">
+                        <span className="text-red-400 shrink-0">•</span>
+                        <span><strong>{err.product_name}:</strong> {err.issue}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <label className="flex items-center gap-2 mt-2 text-xs text-red-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={forcePublish}
+                      onChange={(e) => setForcePublish(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span>Publish anyway (I'll fix these later)</span>
+                  </label>
+                </div>
+              )}
+
+              {/* v0.16.0: Validation warnings */}
+              {publishPreview.warnings && publishPreview.warnings.length > 0 && (
+                <div className="bg-amber-950/30 border border-amber-800/40 rounded-lg p-3">
+                  <p className="text-xs text-amber-300 font-bold mb-2">
+                    ⚠️ Warnings ({publishPreview.warnings.length}) — non-blocking:
+                  </p>
+                  <ul className="text-xs text-amber-200 space-y-1 max-h-32 overflow-y-auto">
+                    {publishPreview.warnings.map((warn: any, i: number) => (
+                      <li key={i} className="flex gap-2">
+                        <span className="text-amber-400 shrink-0">{warn.severity === 'info' ? 'ℹ' : '⚠'}</span>
+                        <span><strong>{warn.product_name}:</strong> {warn.issue}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <div className="bg-amber-950/30 border border-amber-800/40 rounded-lg p-3">
                 <p className="text-xs text-amber-300">
                   ⚠️ Only public fields will be published (name, price, images, color, fabric, category).
@@ -1068,11 +1114,11 @@ export default function Catalog() {
               >Cancel</button>
               <button
                 onClick={handlePublishConfirm}
-                disabled={publishing}
+                disabled={publishing || (publishPreview.errors && publishPreview.errors.length > 0 && !forcePublish)}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center space-x-1"
               >
                 <Globe size={14} />
-                <span>{publishing ? 'Publishing...' : 'Publish Now'}</span>
+                <span>{publishing ? 'Publishing...' : (publishPreview.errors && publishPreview.errors.length > 0 && !forcePublish ? 'Fix errors first' : 'Publish Now')}</span>
               </button>
             </div>
           </div>

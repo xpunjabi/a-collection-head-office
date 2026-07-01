@@ -117,6 +117,7 @@ fn main() {
             // v0.15.0 — Public Catalog Publishing
             commands::preview_catalog_publish,
             commands::publish_catalog_to_github,
+            commands::get_catalog_publish_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

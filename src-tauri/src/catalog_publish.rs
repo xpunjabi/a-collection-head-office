@@ -65,6 +65,32 @@ pub struct CatalogPreview {
     pub whatsapp_number: String,
     pub repo: String,
     pub catalog_url: String,
+    /// v0.16.0: Validation warnings — problems that won't block publish
+    /// but the user should be aware of (missing images, empty fields, etc.)
+    pub warnings: Vec<CatalogWarning>,
+    /// v0.16.0: Validation errors — problems that should be fixed before
+    /// publishing. UI shows them prominently.
+    pub errors: Vec<CatalogError>,
+}
+
+/// v0.16.0: A non-blocking warning about a product that will be published
+/// but has incomplete data. Shown in preview modal as yellow warning.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CatalogWarning {
+    pub product_id: i64,
+    pub product_name: String,
+    pub issue: String,
+    pub severity: String,  // "warning" | "info"
+}
+
+/// v0.16.0: A blocking error — publish cannot proceed. Currently we don't
+/// block publish (user can always override), but if errors exist the UI
+/// shows them prominently and requires explicit confirmation.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CatalogError {
+    pub product_id: i64,
+    pub product_name: String,
+    pub issue: String,
 }
 
 /// Result of a publish operation
@@ -210,6 +236,7 @@ pub fn generate_webp_images(
 
 /// Build a preview summary of what will be published.
 /// Called by the UI before the user confirms the publish action.
+/// v0.16.0: Now also runs validation and includes warnings/errors.
 pub fn build_preview(
     conn: &Connection,
     brand: &str,
@@ -252,6 +279,9 @@ pub fn build_preview(
     };
     let catalog_url = format!("https://{}.github.io/{}/", owner, repo_name);
 
+    // v0.16.0: Run validation
+    let (warnings, errors) = validate_catalog(&catalog, whatsapp_number, &images_dir);
+
     Ok(CatalogPreview {
         product_count: catalog.products.len(),
         image_count: unique_images.len(),
@@ -261,7 +291,141 @@ pub fn build_preview(
         whatsapp_number: whatsapp_number.to_string(),
         repo: repo.to_string(),
         catalog_url,
+        warnings,
+        errors,
     })
+}
+
+/// v0.16.0: Validate catalog before publishing. Returns (warnings, errors).
+/// Warnings are non-blocking (missing images, empty optional fields).
+/// Errors are blocking (empty name, zero price, duplicate SKU).
+///
+/// We don't actually block publish on errors — the UI shows them and lets
+/// the user override. But this gives them a chance to fix issues first.
+fn validate_catalog(
+    catalog: &CatalogJson,
+    whatsapp_number: &str,
+    images_dir: &std::path::Path,
+) -> (Vec<CatalogWarning>, Vec<CatalogError>) {
+    let mut warnings = Vec::new();
+    let mut errors = Vec::new();
+
+    // Global validation: WhatsApp number
+    let clean_wa = whatsapp_number.replace(|c: char| !c.is_ascii_digit(), "");
+    if clean_wa.is_empty() {
+        errors.push(CatalogError {
+            product_id: 0,
+            product_name: "(global)".to_string(),
+            issue: "WhatsApp number is empty — customers won't be able to order. Set it in Settings → Catalog.".to_string(),
+        });
+    } else if clean_wa.len() < 10 || clean_wa.len() > 15 {
+        warnings.push(CatalogWarning {
+            product_id: 0,
+            product_name: "(global)".to_string(),
+            issue: format!("WhatsApp number '{}' looks unusual ({} digits). Expected 10-15 digits with country code.", clean_wa, clean_wa.len()),
+            severity: "warning".to_string(),
+        });
+    }
+
+    // Track SKUs for duplicate detection
+    let mut seen_skus: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+
+    for product in &catalog.products {
+        let name = &product.name;
+        let display_name = if name.is_empty() { "(unnamed product)".to_string() } else { name.clone() };
+
+        // ERROR: Empty name
+        if name.trim().is_empty() {
+            errors.push(CatalogError {
+                product_id: product.id,
+                product_name: display_name,
+                issue: "Product name is empty.".to_string(),
+            });
+        }
+
+        // ERROR: Zero or negative sale price
+        if product.sale_price <= 0.0 {
+            errors.push(CatalogError {
+                product_id: product.id,
+                product_name: display_name,
+                issue: "Sale price is 0 or negative. Customers won't know the cost.".to_string(),
+            });
+        }
+
+        // ERROR: Duplicate SKU
+        if let Some(sku) = &product.sku {
+            if !sku.trim().is_empty() {
+                if let Some(_prev_id) = seen_skus.get(sku) {
+                    errors.push(CatalogError {
+                        product_id: product.id,
+                        product_name: display_name,
+                        issue: format!("Duplicate SKU '{}'. Each product must have a unique SKU.", sku),
+                    });
+                } else {
+                    seen_skus.insert(sku.clone(), product.id);
+                }
+            }
+        }
+
+        // WARNING: No images
+        if product.images.is_empty() {
+            warnings.push(CatalogWarning {
+                product_id: product.id,
+                product_name: display_name,
+                issue: "No product image — will show placeholder on catalog.".to_string(),
+                severity: "warning".to_string(),
+            });
+        } else {
+            // WARNING: Image file missing on disk
+            for img in &product.images {
+                if !img.is_empty() {
+                    let path = images_dir.join(img);
+                    if !path.exists() {
+                        warnings.push(CatalogWarning {
+                            product_id: product.id,
+                            product_name: display_name,
+                            issue: format!("Image file '{}' not found on disk.", img),
+                            severity: "warning".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // WARNING: No category
+        if product.category.as_ref().map_or(true, |c| c.trim().is_empty()) {
+            warnings.push(CatalogWarning {
+                product_id: product.id,
+                product_name: display_name,
+                issue: "No category set — customers can't filter by category.".to_string(),
+                severity: "info".to_string(),
+            });
+        }
+
+        // INFO: No description
+        if product.description.as_ref().map_or(true, |d| d.trim().is_empty()) {
+            warnings.push(CatalogWarning {
+                product_id: product.id,
+                product_name: display_name,
+                issue: "No description — customers see less product info.".to_string(),
+                severity: "info".to_string(),
+            });
+        }
+
+        // WARNING: retail_price < sale_price (looks like a markup, probably wrong)
+        if let Some(retail) = product.retail_price {
+            if retail > 0.0 && retail < product.sale_price {
+                warnings.push(CatalogWarning {
+                    product_id: product.id,
+                    product_name: display_name,
+                    issue: format!("Retail price (Rs. {:.0}) is less than sale price (Rs. {:.0}). Discount will show negative.", retail, product.sale_price),
+                    severity: "warning".to_string(),
+                });
+            }
+        }
+    }
+
+    (warnings, errors)
 }
 
 // ============================================================
@@ -515,4 +679,87 @@ async fn delete_file(
     }
 
     Ok(())
+}
+
+// ============================================================
+// PUBLISH HISTORY: Log + Query
+// ============================================================
+
+use rusqlite::params;
+
+/// v0.16.0: A row in the catalog_publish_history table.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PublishHistoryEntry {
+    pub id: i64,
+    pub published_at: String,
+    pub duration_ms: i64,
+    pub products_count: i64,
+    pub images_uploaded: i64,
+    pub images_deleted: i64,
+    pub success: bool,
+    pub catalog_version: Option<String>,
+    pub error_message: Option<String>,
+    pub warnings_count: i64,
+    pub errors_count: i64,
+}
+
+/// v0.16.0: Insert a publish history entry. Called after every publish
+/// attempt (success or failure).
+pub fn log_publish_history(
+    conn: &Connection,
+    duration_ms: i64,
+    products_count: i64,
+    images_uploaded: i64,
+    images_deleted: i64,
+    success: bool,
+    catalog_version: Option<&str>,
+    error_message: Option<&str>,
+    warnings_count: i64,
+    errors_count: i64,
+) -> Result<i64, rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO catalog_publish_history
+         (published_at, duration_ms, products_count, images_uploaded, images_deleted,
+          success, catalog_version, error_message, warnings_count, errors_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            now, duration_ms, products_count, images_uploaded, images_deleted,
+            success as i64, catalog_version, error_message, warnings_count, errors_count
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// v0.16.0: Get the last N publish history entries (most recent first).
+pub fn get_publish_history(
+    conn: &Connection,
+    limit: i64,
+) -> Result<Vec<PublishHistoryEntry>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, published_at, duration_ms, products_count, images_uploaded,
+                images_deleted, success, catalog_version, error_message,
+                warnings_count, errors_count
+         FROM catalog_publish_history
+         ORDER BY published_at DESC
+         LIMIT ?1"
+    )?;
+    let rows = stmt.query_map(params![limit], |row| {
+        Ok(PublishHistoryEntry {
+            id: row.get(0)?,
+            published_at: row.get(1)?,
+            duration_ms: row.get(2)?,
+            products_count: row.get(3)?,
+            images_uploaded: row.get(4)?,
+            images_deleted: row.get(5)?,
+            success: row.get::<_, i64>(6)? != 0,
+            catalog_version: row.get(7)?,
+            error_message: row.get(8)?,
+            warnings_count: row.get(9)?,
+            errors_count: row.get(10)?,
+        })
+    })?;
+    let mut result = Vec::new();
+    for r in rows { result.push(r?); }
+    Ok(result)
 }

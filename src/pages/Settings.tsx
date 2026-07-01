@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/store'
 import { open } from '@tauri-apps/plugin-dialog'
-import { Shield, Key, Server, HardDrive, RefreshCw, Globe } from 'lucide-react'
+import { invoke } from '@tauri-apps/api/core'
+import { Shield, Key, Server, HardDrive, RefreshCw, Globe, History } from 'lucide-react'
 
 export default function Settings() {
   const {
@@ -23,10 +24,24 @@ export default function Settings() {
   const [catalogBrand, setCatalogBrand] = useState('A Collection Narowal')
   const [catalogWhatsapp, setCatalogWhatsapp] = useState('923420830995')
   const [catalogGithubToken, setCatalogGithubToken] = useState('')
+  // v0.16.0: Publish history
+  const [publishHistory, setPublishHistory] = useState<any[]>([])
 
   useEffect(() => {
     fetchSettings()
+    // v0.16.0: Load publish history on mount
+    loadPublishHistory()
   }, [])
+
+  // v0.16.0: Load publish history from local DB
+  const loadPublishHistory = async () => {
+    try {
+      const history = await invoke<any[]>('get_catalog_publish_history', { limit: 10 })
+      setPublishHistory(Array.isArray(history) ? history : [])
+    } catch (err) {
+      console.warn('Failed to load publish history:', err)
+    }
+  }
 
   useEffect(() => {
     if (settings.ai_provider) setAiProvider(settings.ai_provider)
@@ -330,6 +345,78 @@ export default function Settings() {
         >
           Save Catalog Settings
         </button>
+      </div>
+
+      {/* v0.16.0: Publish History — shows last 10 publish attempts */}
+      <div className="glass-card p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white flex items-center">
+            <History className="mr-2 text-violet-500" size={20} /> Publish History
+          </h2>
+          <button
+            onClick={loadPublishHistory}
+            className="p-1.5 text-gray-400 hover:text-white rounded-lg hover:bg-slate-800"
+            title="Refresh"
+          >
+            <RefreshCw size={14} />
+          </button>
+        </div>
+        {publishHistory.length === 0 ? (
+          <p className="text-xs text-gray-500 italic py-4 text-center">
+            No publish history yet. Click "Publish" in the Catalog tab to push products live.
+          </p>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {publishHistory.map((entry: any) => (
+              <div
+                key={entry.id}
+                className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  entry.success
+                    ? 'bg-emerald-950/20 border-emerald-800/40'
+                    : 'bg-red-950/20 border-red-800/40'
+                }`}
+              >
+                <div className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                  entry.success ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
+                }`}>
+                  {entry.success ? '✓' : '✕'}
+                </div>
+                <div className="flex-1 min-w-0 text-xs space-y-1">
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-gray-300">
+                    <span className="font-mono">{new Date(entry.published_at).toLocaleString()}</span>
+                    <span className="text-gray-500">·</span>
+                    <span>{entry.products_count} products</span>
+                    <span className="text-gray-500">·</span>
+                    <span>{entry.images_uploaded} images up</span>
+                    {entry.images_deleted > 0 && (
+                      <>
+                        <span className="text-gray-500">·</span>
+                        <span className="text-red-400">{entry.images_deleted} deleted</span>
+                      </>
+                    )}
+                    <span className="text-gray-500">·</span>
+                    <span>{(entry.duration_ms / 1000).toFixed(1)}s</span>
+                  </div>
+                  {(entry.warnings_count > 0 || entry.errors_count > 0) && (
+                    <div className="flex gap-3 text-[10px]">
+                      {entry.warnings_count > 0 && (
+                        <span className="text-amber-400">⚠ {entry.warnings_count} warnings</span>
+                      )}
+                      {entry.errors_count > 0 && (
+                        <span className="text-red-400">❌ {entry.errors_count} errors</span>
+                      )}
+                    </div>
+                  )}
+                  {entry.error_message && (
+                    <div className="text-[10px] text-red-400 font-mono break-all">
+                      {entry.error_message}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
