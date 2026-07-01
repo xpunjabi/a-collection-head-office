@@ -323,6 +323,102 @@ pub fn append_ledger_entry(
     Ok(conn.last_insert_rowid())
 }
 
+/// v0.14.10: Update an existing ledger entry's mutable fields (qty,
+/// unit_price, amount, notes). entry_type and agent_id/product_id are
+/// NOT editable — changing them would break the accounting model.
+/// Recalculates amount = qty * unit_price automatically.
+pub fn update_ledger_entry(
+    conn: &Connection,
+    entry_id: i64,
+    qty: i64,
+    unit_price: f64,
+    notes: Option<&str>,
+) -> Result<(), rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let amount = qty as f64 * unit_price;
+    conn.execute(
+        "UPDATE agent_ledger_entries
+         SET qty = ?1, unit_price = ?2, amount = ?3, notes = ?4, updated_at = ?5
+         WHERE id = ?6",
+        params![qty, unit_price, amount, notes.unwrap_or(""), &now, entry_id],
+    )?;
+    Ok(())
+}
+
+/// v0.14.10: Delete a ledger entry by id. Caller is responsible for
+/// recalculating the affected product's denormalized stock columns
+/// (qty_in_head_office, qty_with_agents, qty_sold) after deletion,
+/// since this function only removes the ledger row.
+pub fn delete_ledger_entry(conn: &Connection, entry_id: i64) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "DELETE FROM agent_ledger_entries WHERE id = ?1",
+        params![entry_id],
+    )?;
+    Ok(())
+}
+
+/// v0.14.10: Recalculate a product's denormalized stock columns from
+/// the agent_ledger_entries table. Called after editing or deleting a
+/// ledger entry to ensure products.qty_in_head_office, qty_with_agents,
+/// and qty_sold reflect the current ledger state.
+///
+/// Logic:
+/// - qty_with_agents = SUM(stock_sent) - SUM(stock_returned) - SUM(sale_reported)
+/// - qty_sold = SUM(sale_reported)
+/// - qty_in_head_office is NOT recalculated here — it's only mutated by
+///   send_stock_to_agent / return_stock_from_agent / record_sale, which
+///   adjust it directly. Editing a ledger entry shouldn't retroactively
+///   change HO stock (that would be accounting fraud).
+pub fn recalc_product_stock_from_ledger(conn: &Connection, product_id: i64) -> Result<(), rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let (qty_with_agents, qty_sold): (i64, i64) = conn.query_row(
+        "SELECT
+            COALESCE(SUM(CASE WHEN entry_type = 'stock_sent' THEN qty ELSE 0 END) -
+                     SUM(CASE WHEN entry_type = 'stock_returned' THEN qty ELSE 0 END) -
+                     SUM(CASE WHEN entry_type = 'sale_reported' THEN qty ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN entry_type = 'sale_reported' THEN qty ELSE 0 END), 0)
+         FROM agent_ledger_entries WHERE product_id = ?1",
+        params![product_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    conn.execute(
+        "UPDATE products SET qty_with_agents = ?1, qty_sold = ?2, updated_at = ?3 WHERE id = ?4",
+        params![qty_with_agents, qty_sold, &now, product_id],
+    )?;
+    Ok(())
+}
+
+/// v0.14.10: Get current stock held by each agent for a specific product.
+/// Used by the Catalog form's "Agent Stock (initial allocation)" section
+/// so that editing a product shows the ACTUAL current allocation per
+/// agent (not zeroed-out).
+///
+/// Returns a list of (agent_id, agent_name, current_qty) tuples.
+pub fn get_product_stock_by_agents(
+    conn: &Connection,
+    product_id: i64,
+) -> Result<Vec<(i64, String, i64)>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT
+            a.id,
+            a.name,
+            COALESCE(SUM(CASE WHEN e.entry_type = 'stock_sent' THEN e.qty ELSE 0 END) -
+                     SUM(CASE WHEN e.entry_type = 'stock_returned' THEN e.qty ELSE 0 END) -
+                     SUM(CASE WHEN e.entry_type = 'sale_reported' THEN e.qty ELSE 0 END), 0) AS current_qty
+         FROM agents a
+         LEFT JOIN agent_ledger_entries e ON e.agent_id = a.id AND e.product_id = ?1
+         WHERE a.is_active = 1
+         GROUP BY a.id, a.name
+         ORDER BY a.name ASC"
+    )?;
+    let rows = stmt.query_map(params![product_id], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?;
+    let mut result = Vec::new();
+    for r in rows { result.push(r?); }
+    Ok(result)
+}
+
 pub fn send_stock_to_agent(
     conn: &Connection,
     agent_id: i64,

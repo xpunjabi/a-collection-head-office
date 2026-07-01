@@ -349,7 +349,7 @@ export default function AiWorkspace() {
         {aiMessages.map((msg, i) => (
           <div key={i}>
             <div
-              dir="ltr"
+              dir="auto"
               className={`text-base ${msg.role === 'user' ? 'text-right' : 'text-left'}`}
             >
               <span

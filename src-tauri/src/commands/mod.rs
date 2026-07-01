@@ -991,6 +991,115 @@ pub async fn get_agent_ledger(
     agents::get_agent_ledger_entries(&conn, agent_id, limit).map_err(|e| e.to_string())
 }
 
+/// v0.14.10: Edit an existing agent ledger entry's mutable fields
+/// (qty, unit_price, notes). After update, recalculates the affected
+/// product's denormalized stock columns so the Catalog/Agents UI stays
+/// in sync with the ledger.
+///
+/// Wrapped in a transaction for atomicity (same pattern as
+/// send_stock_to_agent / record_sale).
+#[tauri::command]
+pub async fn update_agent_ledger_entry(
+    state: State<'_, DbState>,
+    entry_id: i64,
+    qty: i64,
+    unit_price: f64,
+    notes: Option<String>,
+) -> Result<(), String> {
+    if qty < 0 {
+        return Err("Quantity cannot be negative.".to_string());
+    }
+    let conn = state.0.lock().await;
+    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
+
+    // Fetch the entry's product_id before update so we can recalc product stock after
+    let product_id: Option<i64> = conn.query_row(
+        "SELECT product_id FROM agent_ledger_entries WHERE id = ?1",
+        rusqlite::params![entry_id],
+        |r| r.get(0),
+    ).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        format!("Ledger entry not found: {}", e)
+    })?;
+
+    agents::update_ledger_entry(&conn, entry_id, qty, unit_price, notes.as_deref()).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    })?;
+
+    // Recalc product stock if the entry had a product_id
+    if let Some(pid) = product_id {
+        agents::recalc_product_stock_from_ledger(&conn, pid).map_err(|e| {
+            let _ = conn.execute("ROLLBACK", []);
+            e.to_string()
+        })?;
+    }
+
+    conn.execute("COMMIT", []).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    })?;
+    Ok(())
+}
+
+/// v0.14.10: Delete an agent ledger entry. After deletion, recalculates
+/// the affected product's stock columns. Wrapped in a transaction.
+#[tauri::command]
+pub async fn delete_agent_ledger_entry(
+    state: State<'_, DbState>,
+    entry_id: i64,
+) -> Result<(), String> {
+    let conn = state.0.lock().await;
+    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
+
+    // Fetch the entry's product_id before delete so we can recalc product stock after
+    let product_id: Option<i64> = conn.query_row(
+        "SELECT product_id FROM agent_ledger_entries WHERE id = ?1",
+        rusqlite::params![entry_id],
+        |r| r.get(0),
+    ).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        format!("Ledger entry not found: {}", e)
+    })?;
+
+    agents::delete_ledger_entry(&conn, entry_id).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    })?;
+
+    // Recalc product stock if the entry had a product_id
+    if let Some(pid) = product_id {
+        agents::recalc_product_stock_from_ledger(&conn, pid).map_err(|e| {
+            let _ = conn.execute("ROLLBACK", []);
+            e.to_string()
+        })?;
+    }
+
+    conn.execute("COMMIT", []).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    })?;
+    Ok(())
+}
+
+/// v0.14.10: Get current stock held by each agent for a specific product.
+/// Used by the Catalog form's "Agent Stock (initial allocation)" section
+/// so that editing a product shows the ACTUAL current allocation per
+/// agent (not zeroed-out). Returns Vec of {agent_id, agent_name, quantity}.
+#[tauri::command]
+pub async fn get_product_agent_stock(
+    state: State<'_, DbState>,
+    product_id: i64,
+) -> Result<Vec<serde_json::Value>, String> {
+    let conn = state.0.lock().await;
+    let rows = agents::get_product_stock_by_agents(&conn, product_id).map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|(id, name, qty)| serde_json::json!({
+        "agent_id": id,
+        "agent_name": name,
+        "quantity": qty,
+    })).collect())
+}
+
 /// Send stock from Head Office to an agent.
 /// Validates that the product has enough qty_in_head_office before sending.
 #[tauri::command]

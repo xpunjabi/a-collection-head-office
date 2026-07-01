@@ -59,14 +59,17 @@ export default function Catalog() {
   const [fabric, setFabric] = useState('')
   const [designType, setDesignType] = useState('')
   const [gender, setGender] = useState('')
-  const [costPrice, setCostPrice] = useState(0)
-  const [salePrice, setSalePrice] = useState(0)
+  // v0.14.10: Use string state for price/qty inputs so backspace can clear
+  // them. Previously Number(e.target.value) returned 0 for empty string,
+  // making the '0' impossible to clear with backspace. Parse on save.
+  const [costPrice, setCostPrice] = useState('')
+  const [salePrice, setSalePrice] = useState('')
   // v0.14.3: purchasePrice removed — was redundant with costPrice, never
   // meaningfully used. Retail/sale/cost are the 3 prices that matter.
-  const [retailPrice, setRetailPrice] = useState(0)
+  const [retailPrice, setRetailPrice] = useState('')
   const [description, setDescription] = useState('')
   const [tags, setTags] = useState('')
-  const [stockQuantity, setStockQuantity] = useState(0)
+  const [stockQuantity, setStockQuantity] = useState('')
   const [status, setStatus] = useState('active')
   const [images, setImages] = useState<string[]>([])
 
@@ -219,8 +222,8 @@ export default function Catalog() {
     setEditProduct(null)
     setProductCode(''); setName(''); setCategory(''); setColor(''); setDesign('')
     setSeason(''); setFabric(''); setDesignType(''); setGender('')
-    setCostPrice(0); setSalePrice(0); setRetailPrice(0)
-    setDescription(''); setTags(''); setStockQuantity(0); setStatus('active'); setImages([])
+    setCostPrice(''); setSalePrice(''); setRetailPrice('')
+    setDescription(''); setTags(''); setStockQuantity(''); setStatus('active'); setImages([])
     // v0.13.7: Load agents instead of locations for Agent Stock section
     try {
       const agents: any[] = await invoke('get_agents')
@@ -234,21 +237,38 @@ export default function Catalog() {
     setProductCode(p.sku || ''); setName(p.name)
     setCategory(p.category || ''); setColor(p.color || ''); setDesign(p.design || '')
     setSeason(p.season || ''); setFabric((p as any).fabric || ''); setDesignType(''); setGender('')
-    setCostPrice(p.cost_price); setSalePrice(p.sale_price)
+    // v0.14.10: Use string state — if value is 0, show empty string so the
+    // field is clearable. Number conversion happens on save.
+    setCostPrice(p.cost_price ? String(p.cost_price) : '')
+    setSalePrice(p.sale_price ? String(p.sale_price) : '')
     // v0.14.3: Don't fall back to sale_price for retail_price — that was
     // the cause of the recurring "Save Rs. 0" bug. If retail_price is
-    // null/0 in DB, leave the field empty (0) so user can enter a real
-    // value. ShareCenter's JS fallback (sale_price * 1.2) handles the
-    // display side until the user enters an explicit retail price.
-    setRetailPrice((p as any).retail_price || 0)
+    // null/0 in DB, leave the field empty so user can enter a real value.
+    setRetailPrice((p as any).retail_price ? String((p as any).retail_price) : '')
     setDescription(p.description || ''); setTags(p.tags || '')
-    setStockQuantity(p.stock_quantity); setStatus(p.status)
+    setStockQuantity(p.stock_quantity ? String(p.stock_quantity) : '')
+    setStatus(p.status)
     try { setImages(JSON.parse(p.images || '[]')) } catch { setImages([]) }
-    // v0.13.7: Load agents instead of locations
+    // v0.14.10: Load ACTUAL agent stock for this product (was hardcoded 0).
+    // This is Issue 2 from the testing report — when editing a product,
+    // the 'Agent Stock (initial allocation)' section showed empty even
+    // though stock had been sent to agents. Now we query the ledger and
+    // show each agent's current holding.
     try {
-      const agents: any[] = await invoke('get_agents')
-      setAgentStock(agents.map((a: any) => ({ agent_id: a.agent.id, agent_name: a.agent.name, quantity: 0 })))
-    } catch { setAgentStock([]) }
+      if (p.id) {
+        const agentStockData: any[] = await invoke('get_product_agent_stock', { productId: p.id })
+        setAgentStock(agentStockData.map((a: any) => ({ agent_id: a.agent_id, agent_name: a.agent_name, quantity: a.quantity })))
+      } else {
+        const agents: any[] = await invoke('get_agents')
+        setAgentStock(agents.map((a: any) => ({ agent_id: a.agent.id, agent_name: a.agent.name, quantity: 0 })))
+      }
+    } catch {
+      // Fallback: just load agents with 0 quantity
+      try {
+        const agents: any[] = await invoke('get_agents')
+        setAgentStock(agents.map((a: any) => ({ agent_id: a.agent.id, agent_name: a.agent.name, quantity: 0 })))
+      } catch { setAgentStock([]) }
+    }
     setShowModal(true)
   }
 
@@ -259,6 +279,14 @@ export default function Catalog() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!productCode || !name) return
+
+    // v0.14.10: Parse string state to numbers (empty string → 0).
+    // Previously state was already a number, but backspace couldn't
+    // clear the field because Number('') = 0 wrote 0 back.
+    const costPriceNum = Number(costPrice) || 0
+    const salePriceNum = Number(salePrice) || 0
+    const retailPriceNum = Number(retailPrice) || 0
+    const stockQuantityNum = Number(stockQuantity) || 0
 
     const productData: Product = {
       id: editProduct?.id,
@@ -272,13 +300,13 @@ export default function Catalog() {
       fabric: fabric || undefined,
       // Store designType in tags if set (reuse existing column)
       tags: [tags, designType, gender].filter(Boolean).join(', ') || undefined,
-      cost_price: Number(costPrice),
-      sale_price: Number(salePrice),
+      cost_price: costPriceNum,
+      sale_price: salePriceNum,
       // v0.14.3: purchase_price removed from form — keep cost_price as the
       // value for the legacy DB column (still in schema for backward compat).
-      purchase_price: Number(costPrice),
+      purchase_price: costPriceNum,
       description: description || undefined,
-      stock_quantity: Number(stockQuantity),
+      stock_quantity: stockQuantityNum,
       status,
       images: JSON.stringify(images),
       created_at: editProduct?.created_at,
@@ -290,7 +318,7 @@ export default function Catalog() {
       // there, so retail_price always came back as null/0 from get_products.
       // Use 0 → undefined so SQLite stores NULL (not 0) when user leaves it
       // blank, letting ShareCenter's `sale_price * 1.2` fallback kick in.
-      retail_price: retailPrice > 0 ? Number(retailPrice) : undefined,
+      retail_price: retailPriceNum > 0 ? retailPriceNum : undefined,
       brand: editProduct?.brand,
     }
 
@@ -312,7 +340,7 @@ export default function Catalog() {
                 agentId: ag.agent_id,
                 productId,
                 qty: ag.quantity,
-                unitPrice: costPrice,
+                unitPrice: costPriceNum,
                 notes: 'Initial stock from Catalog form',
               })
             } catch (err) { console.warn(`Failed to send stock to agent ${ag.agent_name}:`, err) }
@@ -745,17 +773,17 @@ export default function Catalog() {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Cost Price (Rs)</label>
-                  <input type="number" step="1" value={costPrice} onChange={e => setCostPrice(Number(e.target.value))}
+                  <input type="number" step="1" value={costPrice} onChange={e => setCostPrice(e.target.value)}
                     className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Retail Price (Rs)</label>
-                  <input type="number" step="1" value={retailPrice} onChange={e => setRetailPrice(Number(e.target.value))}
+                  <input type="number" step="1" value={retailPrice} onChange={e => setRetailPrice(e.target.value)}
                     className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Sale Price (Rs)</label>
-                  <input type="number" step="1" value={salePrice} onChange={e => setSalePrice(Number(e.target.value))}
+                  <input type="number" step="1" value={salePrice} onChange={e => setSalePrice(e.target.value)}
                     className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
                 </div>
               </div>
@@ -763,7 +791,7 @@ export default function Catalog() {
               {/* Total Stock (HO) — v0.14.3: full-width now that Purchase Price field is removed */}
               <div>
                 <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Total Stock (Head Office)</label>
-                <input type="number" value={stockQuantity} onChange={e => setStockQuantity(Number(e.target.value))}
+                <input type="number" value={stockQuantity} onChange={e => setStockQuantity(e.target.value)}
                   className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
               </div>
 

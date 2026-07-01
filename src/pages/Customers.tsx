@@ -288,8 +288,8 @@ export default function Customers() {
                             <p className="text-gray-500 flex items-center"><Calendar size={10} className="mr-1" />{new Date(order.order_date).toLocaleString()}</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-sm font-bold text-violet-400">${order.total_amount.toFixed(2)}</p>
-                            <p className="text-[10px] text-emerald-400">Est. Profit: ${order.profit.toFixed(2)}</p>
+                            <p className="text-sm font-bold text-violet-400">Rs. {order.total_amount.toFixed(2)}</p>
+                            <p className="text-[10px] text-emerald-400">Est. Profit: Rs. {order.profit.toFixed(2)}</p>
                           </div>
                         </div>
 

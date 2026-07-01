@@ -274,8 +274,8 @@ export default function Reports() {
                         <td className="py-2.5 font-semibold text-white">{cat.category}</td>
                         <td className="py-2.5 text-center">{cat.count}</td>
                         <td className="py-2.5 text-center font-bold">{cat.total_stock}</td>
-                        <td className="py-2.5 text-right font-mono">${cat.cost_value.toFixed(2)}</td>
-                        <td className="py-2.5 text-right font-mono text-violet-400">${cat.retail_value.toFixed(2)}</td>
+                        <td className="py-2.5 text-right font-mono">Rs. {cat.cost_value.toFixed(2)}</td>
+                        <td className="py-2.5 text-right font-mono text-violet-400">Rs. {cat.retail_value.toFixed(2)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -323,7 +323,7 @@ export default function Reports() {
                         <td className="py-2.5 font-semibold text-white">{c.name}</td>
                         <td className="py-2.5 text-gray-400">{c.phone || '-'}</td>
                         <td className="py-2.5 text-center font-bold">{c.orders_count}</td>
-                        <td className="py-2.5 text-right font-mono text-emerald-400 font-bold">${c.total_spent.toFixed(2)}</td>
+                        <td className="py-2.5 text-right font-mono text-emerald-400 font-bold">Rs. {c.total_spent.toFixed(2)}</td>
                       </tr>
                     ))}
                   </tbody>

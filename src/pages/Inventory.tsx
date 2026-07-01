@@ -87,15 +87,15 @@ export default function Inventory() {
         </div>
         <div className="glass-card p-5">
           <p className="text-xs text-gray-400 uppercase font-semibold">Asset Cost Value</p>
-          <p className="text-2xl font-bold text-violet-400 mt-1">${summary.total_cost_value.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-violet-400 mt-1">Rs. {summary.total_cost_value.toFixed(2)}</p>
         </div>
         <div className="glass-card p-5">
           <p className="text-xs text-gray-400 uppercase font-semibold">Estimated Retail Value</p>
-          <p className="text-2xl font-bold text-cyan-400 mt-1">${summary.total_retail_value.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-cyan-400 mt-1">Rs. {summary.total_retail_value.toFixed(2)}</p>
         </div>
         <div className="glass-card p-5">
           <p className="text-xs text-gray-400 uppercase font-semibold">Potential Profit</p>
-          <p className="text-2xl font-bold text-emerald-400 mt-1">${summary.potential_profit.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-emerald-400 mt-1">Rs. {summary.potential_profit.toFixed(2)}</p>
         </div>
       </div>
 
@@ -273,8 +273,8 @@ export default function Inventory() {
                           <td className="py-3 font-semibold text-white">{item.name}</td>
                           <td className="py-3 font-mono text-xs">{item.sku}</td>
                           <td className="py-3 text-center font-bold text-cyan-400">{item.quantity_sold} pcs</td>
-                          <td className="py-3 text-right font-mono text-gray-300">${item.total_revenue.toFixed(2)}</td>
-                          <td className="py-3 text-right font-mono text-emerald-400 font-semibold">${item.total_profit.toFixed(2)}</td>
+                          <td className="py-3 text-right font-mono text-gray-300">Rs. {item.total_revenue.toFixed(2)}</td>
+                          <td className="py-3 text-right font-mono text-emerald-400 font-semibold">Rs. {item.total_profit.toFixed(2)}</td>
                         </tr>
                       ))
                     )}

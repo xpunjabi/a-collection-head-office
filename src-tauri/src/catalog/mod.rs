@@ -297,7 +297,15 @@ pub fn process_and_save_image(src_path: &Path, app_images_dir: &Path, format_typ
         "instagram" => (1080, 1080),
         "facebook" => (1200, 630),
         "whatsapp" => (800, 800),
-        "thumbnail" => (200, 200),
+        // v0.14.10: Increased thumbnail size from 200x200 to 1200x1200.
+        // Previously images were stored at 200x200 (75x compression from a
+        // typical 1500x1500 upload) — fine for grid display but pixelated
+        // when shared to FB/IG which display at 600-1080px. 1200x1200 is
+        // slightly above IG's recommended 1080x1080 post size, so shared
+        // images look crisp. File size goes from ~15KB to ~150-300KB —
+        // manageable for local-first storage. The catalog grid still
+        // downscale via CSS object-contain.
+        "thumbnail" => (1200, 1200),
         _ => (1080, 1080),
     };
     // Use `resize` (preserves aspect ratio, fits within bounds) for ALL
@@ -327,7 +335,15 @@ pub fn process_and_save_image_bytes(img_bytes: &[u8], app_images_dir: &Path, for
         "instagram" => (1080, 1080),
         "facebook" => (1200, 630),
         "whatsapp" => (800, 800),
-        "thumbnail" => (200, 200),
+        // v0.14.10: Increased thumbnail size from 200x200 to 1200x1200.
+        // Previously images were stored at 200x200 (75x compression from a
+        // typical 1500x1500 upload) — fine for grid display but pixelated
+        // when shared to FB/IG which display at 600-1080px. 1200x1200 is
+        // slightly above IG's recommended 1080x1080 post size, so shared
+        // images look crisp. File size goes from ~15KB to ~150-300KB —
+        // manageable for local-first storage. The catalog grid still
+        // downscale via CSS object-contain.
+        "thumbnail" => (1200, 1200),
         _ => (1080, 1080),
     };
     // Same as above: use `resize` (preserves aspect ratio) instead of
