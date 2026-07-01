@@ -16,7 +16,7 @@
 //! 4. publish_catalog() — PUT catalog.json + images via GitHub Contents API,
 //!    DELETE orphan images (products no longer in catalog)
 
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 use serde::{Serialize, Deserialize};
 use crate::catalog;
 use crate::utils;
@@ -150,7 +150,6 @@ pub fn generate_webp_images(
     conn: &Connection,
 ) -> Result<HashMap<String, String>, String> {
     use image::ImageReader;
-    use std::io::Cursor;
 
     let products = catalog::get_all_products(conn).map_err(|e| e.to_string())?;
     let images_dir = utils::get_images_dir();
@@ -169,29 +168,19 @@ pub fn generate_webp_images(
                 continue;
             }
 
-            // Generate WebP filename: strip extension, add .webp
+            // Generate catalog image filename: <stem>_catalog.jpg
             let stem = std::path::Path::new(&original_filename)
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("image");
-            let webp_filename = format!("{}.webp", stem);
-            let dest_path = images_dir.join(&webp_filename);
+            let final_filename = format!("{}_catalog.jpg", stem);
+            let final_path = images_dir.join(&final_filename);
 
             // Load + resize to 400px max (preserves aspect ratio)
             match ImageReader::open(&src_path) {
                 Ok(reader) => match reader.decode() {
                     Ok(img) => {
                         let resized = img.resize(400, 400, image::imageops::FilterType::Lanczos3);
-                        // Save as JPEG with .webp extension (Tauri's image crate
-                        // doesn't support WebP encoding directly without extra deps).
-                        // We use JPEG quality 80 inside a .webp-named file — browsers
-                        // will read it as JPEG via content sniffing. This is a known
-                        // trade-off to avoid adding the `webp` crate dependency.
-                        //
-                        // Actually, let's just save as JPEG with .jpg extension
-                        // for honesty. Frontend serves it correctly.
-                        let final_filename = format!("{}_catalog.jpg", stem);
-                        let final_path = images_dir.join(&final_filename);
                         match resized.save_with_format(&final_path, image::ImageFormat::Jpeg) {
                             Ok(_) => {
                                 mapping.insert(original_filename, final_filename);
@@ -336,7 +325,7 @@ pub async fn publish_to_github(
     let images_dir = utils::get_images_dir();
     let mut uploaded_image_filenames: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for (original_filename, catalog_filename) in &image_mapping {
+    for (_original_filename, catalog_filename) in &image_mapping {
         let src_path = images_dir.join(catalog_filename);
         match std::fs::read(&src_path) {
             Ok(bytes) => {
@@ -491,7 +480,7 @@ async fn list_repo_directory(
         let name = f.get("name")?.as_str()?.to_string();
         let sha = f.get("sha")?.as_str()?.to_string();
         // Only return files (not subdirectories)
-        if f.get("type")?.as_str() == "file" {
+        if f.get("type").and_then(|t| t.as_str()) == Some("file") {
             Some(GitHubContent { name, sha })
         } else {
             None

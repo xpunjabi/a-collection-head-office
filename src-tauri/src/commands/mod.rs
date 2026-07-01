@@ -10,7 +10,7 @@ use crate::ai::{self, AiResponse, KnowledgeEntry};
 use crate::utils;
 use tauri::async_runtime::Mutex;
 use std::path::Path;
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 use tauri::State;
 
 /// Database state shared across all Tauri commands.
