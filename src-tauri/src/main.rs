@@ -2,6 +2,7 @@
 
 mod database;
 mod catalog;
+mod catalog_publish;
 mod inventory;
 mod customers;
 mod reports;
@@ -113,6 +114,9 @@ fn main() {
             // v0.12.5 — Sales
             commands::record_sale,
             commands::get_sales,
+            // v0.15.0 — Public Catalog Publishing
+            commands::preview_catalog_publish,
+            commands::publish_catalog_to_github,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1820,3 +1820,87 @@ pub async fn get_sales(
     for r in rows { result.push(r.map_err(|e| e.to_string())?); }
     Ok(result)
 }
+
+// ============================================================
+// v0.15.0: PUBLIC CATALOG PUBLISHING
+// ============================================================
+
+/// Preview what will be published to the public catalog.
+/// Returns stats (product count, image count, total size, catalog URL).
+/// Called by the UI to show a confirmation modal before publishing.
+#[tauri::command]
+pub async fn preview_catalog_publish(
+    state: State<'_, DbState>,
+) -> Result<crate::catalog_publish::CatalogPreview, String> {
+    let conn = state.0.lock().await;
+
+    // Read catalog settings from the settings table
+    let get_setting = |key: &str| -> String {
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |r| r.get::<_, String>(0),
+        ).unwrap_or_default()
+    };
+
+    let brand = {
+        let v = get_setting("catalog_brand");
+        if v.is_empty() { "A Collection Narowal".to_string() } else { v }
+    };
+    let whatsapp = {
+        let v = get_setting("catalog_whatsapp");
+        if v.is_empty() { "923420830995".to_string() } else { v }
+    };
+    let repo = {
+        let v = get_setting("catalog_repo");
+        if v.is_empty() { "xpunjabi/a-collection-catalog".to_string() } else { v }
+    };
+
+    crate::catalog_publish::build_preview(&conn, &brand, &whatsapp, &repo)
+}
+
+/// Publish catalog to GitHub via Contents API.
+/// Reads catalog_repo, catalog_brand, catalog_whatsapp, AND ai_api_key
+/// from settings (the PAT is stored in ai_api_key — wait, no, we need a
+/// separate setting. Let's add catalog_github_token to settings, OR use
+/// a separate env var. For now, use a dedicated setting key.)
+///
+/// Actually, the GitHub PAT should NOT be in ai_api_key (that's the AI
+/// provider's key). We need a separate setting: `catalog_github_token`.
+/// User will set it in Settings → Catalog section.
+#[tauri::command]
+pub async fn publish_catalog_to_github(
+    state: State<'_, DbState>,
+) -> Result<crate::catalog_publish::PublishResult, String> {
+    let conn = state.0.lock().await;
+
+    // Read catalog settings
+    let get_setting = |key: &str| -> String {
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |r| r.get::<_, String>(0),
+        ).unwrap_or_default()
+    };
+
+    let brand = {
+        let v = get_setting("catalog_brand");
+        if v.is_empty() { "A Collection Narowal".to_string() } else { v }
+    };
+    let whatsapp = {
+        let v = get_setting("catalog_whatsapp");
+        if v.is_empty() { "923420830995".to_string() } else { v }
+    };
+    let repo = {
+        let v = get_setting("catalog_repo");
+        if v.is_empty() { "xpunjabi/a-collection-catalog".to_string() } else { v }
+    };
+    let github_token = get_setting("catalog_github_token");
+    if github_token.is_empty() {
+        return Err("GitHub token not configured. Go to Settings → Catalog and paste your GitHub Personal Access Token.".to_string());
+    }
+
+    crate::catalog_publish::publish_to_github(
+        &conn, &brand, &whatsapp, &repo, &github_token,
+    ).await
+}

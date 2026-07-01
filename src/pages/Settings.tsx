@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/store'
 import { open } from '@tauri-apps/plugin-dialog'
-import { Shield, Key, Server, HardDrive, RefreshCw } from 'lucide-react'
+import { Shield, Key, Server, HardDrive, RefreshCw, Globe } from 'lucide-react'
 
 export default function Settings() {
   const {
@@ -18,6 +18,11 @@ export default function Settings() {
   const [backupInterval, setBackupInterval] = useState('7')
   const [backupResult, setBackupResult] = useState('')
   const [isBackingUp, setIsBackingUp] = useState(false)
+  // v0.15.0: Public catalog config
+  const [catalogRepo, setCatalogRepo] = useState('xpunjabi/a-collection-catalog')
+  const [catalogBrand, setCatalogBrand] = useState('A Collection Narowal')
+  const [catalogWhatsapp, setCatalogWhatsapp] = useState('923420830995')
+  const [catalogGithubToken, setCatalogGithubToken] = useState('')
 
   useEffect(() => {
     fetchSettings()
@@ -29,6 +34,11 @@ export default function Settings() {
     if (settings.ai_model) setAiModel(settings.ai_model)
     if (settings.backup_path) setBackupPath(settings.backup_path)
     if (settings.backup_interval_days) setBackupInterval(settings.backup_interval_days)
+    // v0.15.0: Load catalog settings
+    if (settings.catalog_repo) setCatalogRepo(settings.catalog_repo)
+    if (settings.catalog_brand) setCatalogBrand(settings.catalog_brand)
+    if (settings.catalog_whatsapp) setCatalogWhatsapp(settings.catalog_whatsapp)
+    if (settings.catalog_github_token) setCatalogGithubToken(settings.catalog_github_token)
   }, [settings])
 
   const handleSaveAiSettings = async () => {
@@ -78,6 +88,21 @@ export default function Settings() {
       setBackupResult(`Backup failed: ${err}`)
     } finally {
       setIsBackingUp(false)
+    }
+  }
+
+  const handleSaveCatalogSettings = async () => {
+    try {
+      await updateSetting('catalog_repo', catalogRepo)
+      await updateSetting('catalog_brand', catalogBrand)
+      // Normalize WhatsApp number: strip + and spaces, keep digits only
+      const cleanWhatsapp = catalogWhatsapp.replace(/[^\d]/g, '')
+      await updateSetting('catalog_whatsapp', cleanWhatsapp)
+      setCatalogWhatsapp(cleanWhatsapp)
+      await updateSetting('catalog_github_token', catalogGithubToken)
+      alert('Catalog settings saved!')
+    } catch (err) {
+      alert(`Failed to save catalog settings: ${err}`)
     }
   }
 
@@ -218,6 +243,93 @@ export default function Settings() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* v0.15.0: Public Catalog Configuration — full width below grid */}
+      <div className="glass-card p-5 space-y-4">
+        <h2 className="text-lg font-semibold text-white flex items-center">
+          <Globe className="mr-2 text-violet-500" size={20} /> Public Catalog (PWA)
+        </h2>
+        <p className="text-xs text-gray-400">
+          Configure the public catalog that customers browse. Head Office publishes products to a separate GitHub repo which is served as a PWA on GitHub Pages. Only public fields (name, price, images, etc.) are published — cost, supplier, and profit stay private.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">GitHub Repo</label>
+            <input
+              type="text"
+              value={catalogRepo}
+              onChange={(e) => setCatalogRepo(e.target.value)}
+              placeholder="username/repo-name"
+              className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+            />
+            <p className="text-[10px] text-gray-600 mt-1">Format: username/repo-name</p>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Brand Name</label>
+            <input
+              type="text"
+              value={catalogBrand}
+              onChange={(e) => setCatalogBrand(e.target.value)}
+              placeholder="A Collection Narowal"
+              className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">WhatsApp Number</label>
+            <input
+              type="text"
+              value={catalogWhatsapp}
+              onChange={(e) => setCatalogWhatsapp(e.target.value)}
+              placeholder="923420830995"
+              className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+            />
+            <p className="text-[10px] text-gray-600 mt-1">Digits only, with country code (no +)</p>
+          </div>
+        </div>
+
+        {/* GitHub Token — full width */}
+        <div>
+          <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">GitHub Personal Access Token (PAT)</label>
+          <div className="relative">
+            <Key className="absolute left-3 top-2.5 text-gray-500" size={16} />
+            <input
+              type="password"
+              value={catalogGithubToken}
+              onChange={(e) => setCatalogGithubToken(e.target.value)}
+              placeholder="ghp_... or github_pat_..."
+              className="w-full bg-slate-950 border border-gray-800 rounded-lg pl-10 pr-4 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+            />
+          </div>
+          <p className="text-[10px] text-gray-600 mt-1">
+            Used to publish catalog updates to the GitHub repo. Create at{' '}
+            <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:underline">
+              github.com/settings/tokens
+            </a>{' '}
+            with <code className="text-violet-400">repo</code> scope.
+          </p>
+        </div>
+
+        <div className="bg-violet-950/30 border border-violet-800/40 rounded-lg p-3">
+          <p className="text-xs text-violet-300 font-semibold">📡 Catalog URL</p>
+          <p className="text-xs text-gray-400 mt-1">
+            Once published, your catalog will be live at:{' '}
+            <code className="text-violet-400">
+              https://{catalogRepo.split('/')[0]}.github.io/{catalogRepo.split('/')[1] || ''}/
+            </code>
+          </p>
+          <p className="text-[10px] text-gray-500 mt-2">
+            Go to <strong>Catalog</strong> tab → click <strong>“Publish to Catalog”</strong> button to push your products live.
+          </p>
+        </div>
+
+        <button
+          onClick={handleSaveCatalogSettings}
+          className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          Save Catalog Settings
+        </button>
       </div>
     </div>
   )

@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   Search, Download, Upload, Plus, Edit, Trash2, Image as ImageIcon,
   X, Palette, MapPin, Share2, ChevronDown, CheckSquare, Square,
-  MessageCircle, Facebook, Instagram, Twitter, ShoppingCart
+  MessageCircle, Facebook, Instagram, Twitter, ShoppingCart, Globe
 } from 'lucide-react'
 import ProductImage from '../components/ProductImage'
 import {
@@ -93,6 +93,11 @@ export default function Catalog() {
   const [saleNotes, setSaleNotes] = useState('')
   const [saleSaving, setSaleSaving] = useState(false)
   const [agents, setAgents] = useState<{agent: {id: number; name: string; city?: string}}[]>([])
+
+  // v0.15.0: Publish to Catalog state
+  const [publishPreview, setPublishPreview] = useState<any>(null)
+  const [publishing, setPublishing] = useState(false)
+  const [publishResult, setPublishResult] = useState<any>(null)
 
   useEffect(() => { fetchProducts() }, [])
 
@@ -435,6 +440,30 @@ export default function Catalog() {
     } catch (err) { alert(err) }
   }
 
+  // v0.15.0: Publish to Catalog handlers
+  const handlePublishPreview = async () => {
+    try {
+      const preview = await invoke('preview_catalog_publish')
+      setPublishPreview(preview)
+    } catch (err) {
+      alert(`Failed to preview: ${err}`)
+    }
+  }
+
+  const handlePublishConfirm = async () => {
+    setPublishing(true)
+    setPublishResult(null)
+    try {
+      const result = await invoke('publish_catalog_to_github')
+      setPublishResult(result)
+      setPublishPreview(null)
+    } catch (err) {
+      setPublishResult({ success: false, errors: [String(err)] })
+    } finally {
+      setPublishing(false)
+    }
+  }
+
   const handleCsvImport = async () => {
     try {
       const selected = await open({ multiple: false, filters: [{ name: 'CSV', extensions: ['csv'] }] })
@@ -465,7 +494,15 @@ export default function Catalog() {
           <h1 className="text-3xl font-bold tracking-tight text-white font-display">Product Catalog</h1>
           <p className="text-sm text-gray-400 mt-1">Manage inventory with color, design, location tracking.</p>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2 flex-wrap">
+          {/* v0.15.0: Publish to Catalog button */}
+          <button
+            onClick={handlePublishPreview}
+            className="flex items-center space-x-1 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium"
+            title="Publish to public catalog website"
+          >
+            <Globe size={16} /><span>Publish</span>
+          </button>
           <button onClick={handleCsvImport} className="flex items-center space-x-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 border border-gray-700 rounded-lg text-sm">
             <Upload size={16} /><span>Import</span>
           </button>
@@ -981,6 +1018,113 @@ export default function Catalog() {
                   {saleSaving ? 'Recording...' : 'Record Sale'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v0.15.0: Publish Preview Modal */}
+      {publishPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-gray-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-slate-950/40">
+              <h3 className="text-lg font-bold text-white flex items-center space-x-2">
+                <Globe size={18} className="text-emerald-400" />
+                <span>Publish to Catalog</span>
+              </h3>
+              <button
+                onClick={() => setPublishPreview(null)}
+                disabled={publishing}
+                className="text-gray-400 hover:text-white disabled:opacity-50"
+              ><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-gray-400">Brand:</span><span className="text-white font-medium">{publishPreview.brand}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">Products:</span><span className="text-white font-bold">{publishPreview.product_count}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">Images:</span><span className="text-white font-bold">{publishPreview.image_count}</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">Total size:</span><span className="text-white font-bold">{publishPreview.total_size_display}</span></div>
+                <div className="border-t border-gray-800 pt-2 mt-2">
+                  <div className="flex justify-between"><span className="text-gray-400">Repo:</span><span className="text-gray-300 text-xs font-mono">{publishPreview.repo}</span></div>
+                </div>
+                <div className="flex justify-between"><span className="text-gray-400">URL:</span><span className="text-emerald-400 text-xs font-mono truncate ml-2">{publishPreview.catalog_url}</span></div>
+              </div>
+              <div className="bg-amber-950/30 border border-amber-800/40 rounded-lg p-3">
+                <p className="text-xs text-amber-300">
+                  ⚠️ Only public fields will be published (name, price, images, color, fabric, category).
+                  Cost price, supplier, profit, and internal notes will NOT be shared.
+                </p>
+              </div>
+              <p className="text-xs text-gray-500">
+                Publishing will upload catalog.json + images to GitHub via Contents API.
+                GitHub Pages auto-deploys within ~30 seconds. Customers can browse immediately after.
+              </p>
+            </div>
+            <div className="flex justify-end space-x-2 p-4 border-t border-gray-800 bg-slate-950/40">
+              <button
+                onClick={() => setPublishPreview(null)}
+                disabled={publishing}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg text-sm disabled:opacity-50"
+              >Cancel</button>
+              <button
+                onClick={handlePublishConfirm}
+                disabled={publishing}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center space-x-1"
+              >
+                <Globe size={14} />
+                <span>{publishing ? 'Publishing...' : 'Publish Now'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v0.15.0: Publish Result Modal */}
+      {publishResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-gray-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className={`flex items-center justify-between p-4 border-b border-gray-800 ${publishResult.success ? 'bg-emerald-950/40' : 'bg-red-950/40'}`}>
+              <h3 className={`text-lg font-bold flex items-center space-x-2 ${publishResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                {publishResult.success ? '✅ Published!' : '❌ Failed'}
+              </h3>
+              <button onClick={() => setPublishResult(null)} className="text-gray-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3 text-sm">
+              {publishResult.success ? (
+                <>
+                  <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 space-y-2">
+                    <div className="flex justify-between"><span className="text-gray-400">Products published:</span><span className="text-white font-bold">{publishResult.products_published}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-400">Images uploaded:</span><span className="text-white font-bold">{publishResult.images_uploaded}</span></div>
+                    {publishResult.images_deleted > 0 && (
+                      <div className="flex justify-between"><span className="text-gray-400">Orphan images deleted:</span><span className="text-white font-bold">{publishResult.images_deleted}</span></div>
+                    )}
+                  </div>
+                  <div className="bg-emerald-950/30 border border-emerald-800/40 rounded-lg p-3">
+                    <p className="text-xs text-emerald-300 font-semibold">📡 Live in ~30 seconds at:</p>
+                    <a
+                      href={publishResult.catalog_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-emerald-400 text-xs font-mono break-all hover:underline mt-1 block"
+                    >{publishResult.catalog_url}</a>
+                  </div>
+                </>
+              ) : (
+                <div className="bg-red-950/30 border border-red-800/40 rounded-lg p-3">
+                  <p className="text-xs text-red-300 font-semibold mb-2">Errors:</p>
+                  <ul className="text-xs text-red-200 space-y-1 list-disc list-inside">
+                    {(publishResult.errors || [String(publishResult)]).map((err: string, i: number) => (
+                      <li key={i} className="font-mono break-all">{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end p-4 border-t border-gray-800 bg-slate-950/40">
+              <button
+                onClick={() => setPublishResult(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg text-sm"
+              >Close</button>
             </div>
           </div>
         </div>
