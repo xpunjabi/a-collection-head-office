@@ -1828,79 +1828,100 @@ pub async fn get_sales(
 /// Preview what will be published to the public catalog.
 /// Returns stats (product count, image count, total size, catalog URL).
 /// Called by the UI to show a confirmation modal before publishing.
+///
+/// v0.15.2: Critical — must acquire DB lock, read settings + products, then
+/// RELEASE the lock before doing any async work. rusqlite::Connection is not
+/// Send, so holding the Mutex across .await causes "future cannot be sent
+/// between threads safely" compile error. This pattern: lock → read → drop →
+/// process is the same one used by ask_ai (search ask_ai in commands/mod.rs).
 #[tauri::command]
 pub async fn preview_catalog_publish(
     state: State<'_, DbState>,
 ) -> Result<crate::catalog_publish::CatalogPreview, String> {
-    let conn = state.0.lock().await;
+    // Scope the lock — read all needed data, then release before any .await
+    let (brand, whatsapp, repo, preview) = {
+        let conn = state.0.lock().await;
 
-    // Read catalog settings from the settings table
-    let get_setting = |key: &str| -> String {
-        conn.query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            params![key],
-            |r| r.get::<_, String>(0),
-        ).unwrap_or_default()
-    };
+        let get_setting = |key: &str| -> String {
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |r| r.get::<_, String>(0),
+            ).unwrap_or_default()
+        };
 
-    let brand = {
-        let v = get_setting("catalog_brand");
-        if v.is_empty() { "A Collection Narowal".to_string() } else { v }
-    };
-    let whatsapp = {
-        let v = get_setting("catalog_whatsapp");
-        if v.is_empty() { "923420830995".to_string() } else { v }
-    };
-    let repo = {
-        let v = get_setting("catalog_repo");
-        if v.is_empty() { "xpunjabi/a-collection-catalog".to_string() } else { v }
-    };
+        let brand = {
+            let v = get_setting("catalog_brand");
+            if v.is_empty() { "A Collection Narowal".to_string() } else { v }
+        };
+        let whatsapp = {
+            let v = get_setting("catalog_whatsapp");
+            if v.is_empty() { "923420830995".to_string() } else { v }
+        };
+        let repo = {
+            let v = get_setting("catalog_repo");
+            if v.is_empty() { "xpunjabi/a-collection-catalog".to_string() } else { v }
+        };
 
-    crate::catalog_publish::build_preview(&conn, &brand, &whatsapp, &repo)
+        // build_preview does file I/O (reading image sizes) but no async work,
+        // so it's safe to call while holding the lock.
+        let preview = crate::catalog_publish::build_preview(&conn, &brand, &whatsapp, &repo)?;
+        (brand, whatsapp, repo, preview)
+    };
+    // Lock released here
+
+    Ok(preview)
 }
 
 /// Publish catalog to GitHub via Contents API.
-/// Reads catalog_repo, catalog_brand, catalog_whatsapp, AND ai_api_key
-/// from settings (the PAT is stored in ai_api_key — wait, no, we need a
-/// separate setting. Let's add catalog_github_token to settings, OR use
-/// a separate env var. For now, use a dedicated setting key.)
-///
-/// Actually, the GitHub PAT should NOT be in ai_api_key (that's the AI
-/// provider's key). We need a separate setting: `catalog_github_token`.
-/// User will set it in Settings → Catalog section.
+/// v0.15.2: Same pattern as preview_catalog_publish — lock, read, release,
+/// then do async GitHub API calls. Connection is not Send so can't be held
+/// across .await.
 #[tauri::command]
 pub async fn publish_catalog_to_github(
     state: State<'_, DbState>,
 ) -> Result<crate::catalog_publish::PublishResult, String> {
-    let conn = state.0.lock().await;
+    // Phase 1: Acquire lock, read all settings + build catalog data, release lock
+    let (catalog, image_mapping, repo, github_token) = {
+        let conn = state.0.lock().await;
 
-    // Read catalog settings
-    let get_setting = |key: &str| -> String {
-        conn.query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            params![key],
-            |r| r.get::<_, String>(0),
-        ).unwrap_or_default()
-    };
+        let get_setting = |key: &str| -> String {
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |r| r.get::<_, String>(0),
+            ).unwrap_or_default()
+        };
 
-    let brand = {
-        let v = get_setting("catalog_brand");
-        if v.is_empty() { "A Collection Narowal".to_string() } else { v }
-    };
-    let whatsapp = {
-        let v = get_setting("catalog_whatsapp");
-        if v.is_empty() { "923420830995".to_string() } else { v }
-    };
-    let repo = {
-        let v = get_setting("catalog_repo");
-        if v.is_empty() { "xpunjabi/a-collection-catalog".to_string() } else { v }
-    };
-    let github_token = get_setting("catalog_github_token");
-    if github_token.is_empty() {
-        return Err("GitHub token not configured. Go to Settings → Catalog and paste your GitHub Personal Access Token.".to_string());
-    }
+        let brand = {
+            let v = get_setting("catalog_brand");
+            if v.is_empty() { "A Collection Narowal".to_string() } else { v }
+        };
+        let whatsapp = {
+            let v = get_setting("catalog_whatsapp");
+            if v.is_empty() { "923420830995".to_string() } else { v }
+        };
+        let repo = {
+            let v = get_setting("catalog_repo");
+            if v.is_empty() { "xpunjabi/a-collection-catalog".to_string() } else { v }
+        };
+        let github_token = get_setting("catalog_github_token");
+        if github_token.is_empty() {
+            return Err("GitHub token not configured. Go to Settings → Catalog and paste your GitHub Personal Access Token.".to_string());
+        }
 
-    crate::catalog_publish::publish_to_github(
-        &conn, &brand, &whatsapp, &repo, &github_token,
+        // Build catalog data (sync — safe to call while holding lock)
+        let catalog = crate::catalog_publish::build_catalog_json(&conn, &brand, &whatsapp)
+            .map_err(|e| format!("Failed to build catalog: {}", e))?;
+        let image_mapping = crate::catalog_publish::generate_webp_images(&conn)
+            .map_err(|e| format!("Failed to generate images: {}", e))?;
+
+        (catalog, image_mapping, repo, github_token)
+    };
+    // Lock released here — now safe to do async GitHub API work
+
+    // Phase 2: Upload to GitHub (no DB access, pure async HTTP)
+    crate::catalog_publish::upload_to_github(
+        &catalog, &image_mapping, &repo, &github_token,
     ).await
 }

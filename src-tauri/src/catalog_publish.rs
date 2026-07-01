@@ -268,17 +268,22 @@ pub fn build_preview(
 // PUBLISH: Upload to GitHub via Contents API
 // ============================================================
 
-/// Publish catalog.json + all images to GitHub via Contents API.
-/// Returns PublishResult with counts and any per-file errors.
+/// Upload catalog.json + all images to GitHub via Contents API.
+/// v0.15.2: This is the ASYNC-ONLY part of the publish flow. The sync
+/// data prep (build_catalog_json, generate_webp_images) is done BEFORE
+/// calling this function, while the DB lock is still held. This function
+/// does NO database access — it only does HTTP calls to GitHub.
+///
+/// This separation is required because rusqlite::Connection is not Send,
+/// so we can't hold the Mutex<Connection> across .await points.
 ///
 /// GitHub Contents API:
 ///   GET  /repos/{owner}/{repo}/contents/{path}  → returns SHA if file exists
 ///   PUT  /repos/{owner}/{repo}/contents/{path}  → create (no SHA) or update (with SHA)
 ///   DELETE /repos/{owner}/{repo}/contents/{path}  → delete (requires SHA)
-pub async fn publish_to_github(
-    conn: &Connection,
-    brand: &str,
-    whatsapp_number: &str,
+pub async fn upload_to_github(
+    catalog: &CatalogJson,
+    image_mapping: &HashMap<String, String>,
     repo: &str,
     github_token: &str,
 ) -> Result<PublishResult, String> {
@@ -287,28 +292,19 @@ pub async fn publish_to_github(
     let mut errors: Vec<String> = Vec::new();
     let mut images_uploaded = 0usize;
     let mut images_deleted = 0usize;
-
-    // Step 1: Build catalog.json
-    let catalog = build_catalog_json(conn, brand, whatsapp_number)
-        .map_err(|e| format!("Failed to build catalog: {}", e))?;
-
     let products_published = catalog.products.len();
 
-    // Step 2: Generate WebP/JPEG catalog images
-    let image_mapping = generate_webp_images(conn)
-        .map_err(|e| format!("Failed to generate images: {}", e))?;
-
-    // Step 3: Build HTTP client
+    // Build HTTP client
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent("a-collection-head-office/0.15.0")
+        .user_agent("a-collection-head-office/0.15.2")
         .build()
         .map_err(|e| format!("HTTP client build failed: {}", e))?;
 
     let api_base = format!("https://api.github.com/repos/{}/contents", repo);
 
-    // Step 4: Upload catalog.json
-    let catalog_json_str = serde_json::to_string_pretty(&catalog)
+    // Upload catalog.json
+    let catalog_json_str = serde_json::to_string_pretty(catalog)
         .map_err(|e| format!("JSON serialize failed: {}", e))?;
     let catalog_b64 = base64::engine::general_purpose::STANDARD.encode(catalog_json_str.as_bytes());
 
@@ -321,11 +317,11 @@ pub async fn publish_to_github(
         errors.push(format!("catalog.json: {}", e));
     }
 
-    // Step 5: Upload all catalog images (use the image_mapping for filenames)
+    // Upload all catalog images
     let images_dir = utils::get_images_dir();
     let mut uploaded_image_filenames: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for (_original_filename, catalog_filename) in &image_mapping {
+    for (_original_filename, catalog_filename) in image_mapping {
         let src_path = images_dir.join(catalog_filename);
         match std::fs::read(&src_path) {
             Ok(bytes) => {
@@ -344,7 +340,7 @@ pub async fn publish_to_github(
         }
     }
 
-    // Step 6: Delete orphan images (files in data/images/ that aren't in current catalog)
+    // Delete orphan images (files in data/images/ that aren't in current catalog)
     if let Ok(existing_files) = list_repo_directory(&client, repo, github_token, "data/images").await {
         for file in existing_files {
             if !uploaded_image_filenames.contains(&file.name) {
