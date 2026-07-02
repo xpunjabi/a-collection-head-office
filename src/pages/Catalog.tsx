@@ -48,6 +48,11 @@ export default function Catalog() {
   const [showModal, setShowModal] = useState(false)
   const [editProduct, setEditProduct] = useState<Product | null>(null)
   const [agentStock, setAgentStock] = useState<AgentStockEntry[]>([])
+  // v0.16.3: Track ORIGINAL agent stock values when editing so we can
+  // compare on save and send/return the difference. Previously agent
+  // stock was only saved for NEW products — editing existing products
+  // silently dropped any changes.
+  const [originalAgentStock, setOriginalAgentStock] = useState<Record<number, number>>({})
 
   // Form states
   const [productCode, setProductCode] = useState('')
@@ -282,17 +287,21 @@ export default function Catalog() {
     setStatus(p.status)
     try { setImages(JSON.parse(p.images || '[]')) } catch { setImages([]) }
     // v0.14.10: Load ACTUAL agent stock for this product (was hardcoded 0).
-    // This is Issue 2 from the testing report — when editing a product,
-    // the 'Agent Stock (initial allocation)' section showed empty even
-    // though stock had been sent to agents. Now we query the ledger and
-    // show each agent's current holding.
+    // v0.16.3: Also save ORIGINAL values so handleSave can compare and
+    // send/return the difference (not just for new products).
     try {
       if (p.id) {
         const agentStockData: any[] = await invoke('get_product_agent_stock', { productId: p.id })
-        setAgentStock(agentStockData.map((a: any) => ({ agent_id: a.agent_id, agent_name: a.agent_name, quantity: a.quantity })))
+        const stockEntries = agentStockData.map((a: any) => ({ agent_id: a.agent_id, agent_name: a.agent_name, quantity: a.quantity }))
+        setAgentStock(stockEntries)
+        // Save original values for comparison on save
+        const origMap: Record<number, number> = {}
+        stockEntries.forEach((s: any) => { origMap[s.agent_id] = s.quantity })
+        setOriginalAgentStock(origMap)
       } else {
         const agents: any[] = await invoke('get_agents')
         setAgentStock(agents.map((a: any) => ({ agent_id: a.agent.id, agent_name: a.agent.name, quantity: 0 })))
+        setOriginalAgentStock({})
       }
     } catch {
       // Fallback: just load agents with 0 quantity
@@ -367,9 +376,12 @@ export default function Catalog() {
       } else {
         productId = await addProduct(productData) as unknown as number
       }
-      // v0.13.7: Agent stock — only send stock if quantity > 0 AND it's a new product
-      // (for existing products, stock is managed via Agents tab → Send Stock)
+      // v0.13.7: Agent stock — for NEW products, send initial allocation.
+      // v0.16.3: For EXISTING products, compare current values with original
+      // and send/return the difference. Previously editing agent stock on
+      // existing products was silently ignored.
       if (!editProduct?.id) {
+        // NEW product — send initial allocation
         for (const ag of agentStock) {
           if (ag.quantity > 0) {
             try {
@@ -381,6 +393,37 @@ export default function Catalog() {
                 notes: 'Initial stock from Catalog form',
               })
             } catch (err) { console.warn(`Failed to send stock to agent ${ag.agent_name}:`, err) }
+          }
+        }
+      } else {
+        // EXISTING product — compare with original and send/return difference
+        for (const ag of agentStock) {
+          const originalQty = originalAgentStock[ag.agent_id] || 0
+          const newQty = ag.quantity
+          const diff = newQty - originalQty
+
+          if (diff > 0) {
+            // Stock increased — send more to agent
+            try {
+              await invoke('send_stock_to_agent', {
+                agentId: ag.agent_id,
+                productId,
+                qty: diff,
+                unitPrice: costPriceNum,
+                notes: 'Stock adjustment from Catalog form edit',
+              })
+            } catch (err) { console.warn(`Failed to send stock to agent ${ag.agent_name}:`, err) }
+          } else if (diff < 0) {
+            // Stock decreased — return from agent
+            try {
+              await invoke('return_stock_from_agent', {
+                agentId: ag.agent_id,
+                productId,
+                qty: -diff,  // return_stock expects positive qty
+                unitPrice: costPriceNum,
+                notes: 'Stock adjustment from Catalog form edit',
+              })
+            } catch (err) { console.warn(`Failed to return stock from agent ${ag.agent_name}:`, err) }
           }
         }
       }

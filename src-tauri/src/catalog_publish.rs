@@ -110,6 +110,8 @@ pub struct PublishResult {
 
 /// Build the public CatalogJson from the local SQLite database.
 /// Only active products are exported. Allowlist fields only.
+/// v0.16.3: Deduplicates by name (case-insensitive) — if two products have
+/// the same name, only the first one (by id, newest) is published.
 pub fn build_catalog_json(
     conn: &Connection,
     brand: &str,
@@ -117,15 +119,23 @@ pub fn build_catalog_json(
 ) -> Result<CatalogJson, String> {
     let products = catalog::get_all_products(conn).map_err(|e| e.to_string())?;
 
+    // v0.16.3: Track seen names to prevent duplicates on the public catalog.
+    // Key = lowercase name, value = (). If we've seen this name, skip.
+    let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     let public_products: Vec<PublicProduct> = products
         .into_iter()
         .filter(|p| p.status == "active")  // Only publish active products
+        .filter(|p| {
+            // v0.16.3: Dedup by name (case-insensitive)
+            let key = p.name.trim().to_lowercase();
+            if key.is_empty() { return false; }
+            seen_names.insert(key)
+        })
         .map(|p| {
-            // Parse images JSON (stored as '["filename.jpg"]')
             let images: Vec<String> = serde_json::from_str(&p.images)
                 .unwrap_or_default();
 
-            // Determine availability
             let availability = if p.profit_status.as_deref() == Some("sold_out") {
                 "sold_out".to_string()
             } else {
@@ -145,8 +155,6 @@ pub fn build_catalog_json(
                 description: p.description,
                 images,
                 availability,
-                // NOTE: cost_price, purchase_price, supplier_id, profit_status,
-                // base_unit_cost, landed_unit_cost, qty_*  — NEVER included
             }
         })
         .collect();
