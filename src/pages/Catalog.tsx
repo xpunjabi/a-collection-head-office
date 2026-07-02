@@ -243,7 +243,32 @@ export default function Catalog() {
     setEditProduct(p)
     setProductCode(p.sku || ''); setName(p.name)
     setCategory(p.category || ''); setColor(p.color || ''); setDesign(p.design || '')
-    setSeason(p.season || ''); setFabric((p as any).fabric || ''); setDesignType(''); setGender('')
+    setSeason(p.season || ''); setFabric((p as any).fabric || '')
+
+    // v0.16.2: Parse designType + gender from tags (they're stored there
+    // comma-separated with user tags). Previously these were hardcoded to ''
+    // on edit, so the dropdowns always showed empty even though the data
+    // was saved. Now we extract them.
+    const DESIGN_TYPES = ['Digital Print', 'Block Print', 'Screen Print',
+      'Machine Embroidery', 'Hand Embroidery', 'Chikankari', 'Zari/Tilla Work',
+      'Solid Plain', 'Self-Texture']
+    const GENDERS = ['Ladies', 'Gents', 'Kids']
+    const tagParts = (p.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+    let parsedDesignType = ''
+    let parsedGender = ''
+    const remainingTags: string[] = []
+    for (const part of tagParts) {
+      if (DESIGN_TYPES.includes(part)) {
+        parsedDesignType = part
+      } else if (GENDERS.includes(part)) {
+        parsedGender = part
+      } else {
+        remainingTags.push(part)
+      }
+    }
+    setDesignType(parsedDesignType)
+    setGender(parsedGender)
+    setTags(remainingTags.join(', '))
     // v0.14.10: Use string state — if value is 0, show empty string so the
     // field is clearable. Number conversion happens on save.
     setCostPrice(p.cost_price ? String(p.cost_price) : '')
@@ -285,7 +310,12 @@ export default function Catalog() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!productCode || !name) return
+    // v0.16.2: Auto-generate SKU if user left product code empty.
+    // Format: AC-<timestamp> (same as AI draft path in Rust).
+    // User should never get blocked by "product code required" — the system
+    // assigns one automatically if they don't provide it.
+    if (!name) return  // Name is still required
+    const finalProductCode = productCode.trim() || `AC-${Date.now()}`
 
     // v0.14.10: Parse string state to numbers (empty string → 0).
     // Previously state was already a number, but backspace couldn't
@@ -297,7 +327,7 @@ export default function Catalog() {
 
     const productData: Product = {
       id: editProduct?.id,
-      sku: productCode,
+      sku: finalProductCode,
       name,
       category: category || undefined,
       color: color || undefined,
@@ -744,9 +774,9 @@ export default function Catalog() {
             <form onSubmit={handleSave} className="p-5 space-y-4 overflow-y-auto">
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Product Code *</label>
-                  <input type="text" required value={productCode} onChange={e => setProductCode(e.target.value)}
-                    placeholder="AC-2026-001"
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Product Code <span className="text-gray-600 normal-case font-normal">(auto if empty)</span></label>
+                  <input type="text" value={productCode} onChange={e => setProductCode(e.target.value)}
+                    placeholder="AC-2026-001 (or leave empty)"
                     className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
                 </div>
                 <div>

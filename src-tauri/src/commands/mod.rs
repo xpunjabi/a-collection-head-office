@@ -1914,10 +1914,27 @@ pub async fn publish_catalog_to_github(
         }
 
         // Build catalog data (sync — safe to call while holding lock)
-        let catalog = crate::catalog_publish::build_catalog_json(&conn, &brand, &whatsapp)
+        let mut catalog = crate::catalog_publish::build_catalog_json(&conn, &brand, &whatsapp)
             .map_err(|e| format!("Failed to build catalog: {}", e))?;
         let image_mapping = crate::catalog_publish::generate_webp_images(&conn)
             .map_err(|e| format!("Failed to generate images: {}", e))?;
+
+        // v0.16.2: CRITICAL FIX — catalog.json stores original image filenames
+        // (e.g. "123456_thumbnail.jpg") but uploaded files have catalog names
+        // (e.g. "123456_catalog.jpg"). Without this rewrite, the frontend tries
+        // to load data/images/123456_thumbnail.jpg but the file on GitHub is
+        // data/images/123456_catalog.jpg → broken images!
+        for product in &mut catalog.products {
+            let mut catalog_images: Vec<String> = Vec::new();
+            for orig_img in &product.images {
+                if let Some(catalog_img) = image_mapping.get(orig_img) {
+                    catalog_images.push(catalog_img.clone());
+                } else {
+                    catalog_images.push(orig_img.clone());
+                }
+            }
+            product.images = catalog_images;
+        }
 
         // v0.16.0: Get validation counts for history logging
         let (warnings_count, errors_count) = match crate::catalog_publish::build_preview(&conn, &brand, &whatsapp, &repo) {
