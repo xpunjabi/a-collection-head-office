@@ -171,6 +171,93 @@ pub fn build_catalog_json(
 }
 
 // ============================================================
+// v0.17.0: STATIC PRODUCT PAGE GENERATION
+// ============================================================
+
+/// v0.17.0: Generate a static HTML page for a single product. This page
+/// has proper Open Graph meta tags (for FB/WhatsApp link previews) and a
+/// tiny redirect script that opens the SPA with this product in the modal.
+///
+/// When someone shares a product URL on FB/WhatsApp:
+/// 1. The platform's crawler fetches this HTML file
+/// 2. Crawler reads OG meta tags → shows rich preview (title, image, desc)
+/// 3. When a real user clicks the link, the redirect script runs
+/// 4. Browser navigates to ../#/SKU → SPA loads → product opens in modal
+///
+/// This is the ONLY way to get per-product OG previews on GitHub Pages
+/// (static hosting, no server-side rendering).
+pub fn generate_product_page(
+    product: &PublicProduct,
+    catalog: &CatalogJson,
+    base_url: &str,
+) -> String {
+    let slug = product.sku.as_deref().unwrap_or("product");
+    let title = html_escape(&product.name);
+    let description = product.description
+        .as_ref()
+        .map(|d| html_escape(&d.chars().take(200).collect::<String>()))
+        .unwrap_or_else(|| format!("{} — Rs. {}", product.name, format_price(product.sale_price)));
+    let image_url = if !product.images.is_empty() {
+        format!("{}/data/images/{}", base_url, product.images[0])
+    } else {
+        format!("{}/icon-512.png", base_url)
+    };
+    let product_url = format!("{}/products/{}.html", base_url, slug);
+    let brand = html_escape(&catalog.brand);
+
+    format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title} — {brand}</title>
+
+  <!-- Open Graph for Facebook, WhatsApp, Messenger -->
+  <meta property="og:title" content="{title}" />
+  <meta property="og:description" content="{description}" />
+  <meta property="og:image" content="{image_url}" />
+  <meta property="og:image:width" content="400" />
+  <meta property="og:image:height" content="400" />
+  <meta property="og:url" content="{product_url}" />
+  <meta property="og:type" content="product" />
+  <meta property="og:site_name" content="{brand}" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="{title}" />
+  <meta name="twitter:description" content="{description}" />
+  <meta name="twitter:image" content="{image_url}" />
+
+  <!-- Theme -->
+  <meta name="theme-color" content="#000000" />
+</head>
+<body>
+  <p>Redirecting to {brand}…</p>
+  <p>Product: {title}</p>
+  <script>
+    // Redirect to the SPA with hash routing — opens this product in modal
+    window.location.replace('../#/{slug}');
+  </script>
+  <noscript>
+    <a href="../#/{slug}">Click here to view {title}</a>
+  </noscript>
+</body>
+</html>"#)
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+     .replace('<', "&lt;")
+     .replace('>', "&gt;")
+     .replace('"', "&quot;")
+     .replace('\'', "&#x27;")
+}
+
+fn format_price(n: f64) -> String {
+    format!("{:.0}", n)
+}
+
+// ============================================================
 // IMAGE: Generate WebP versions for catalog
 // ============================================================
 
@@ -539,6 +626,53 @@ pub async fn upload_to_github(
         None => ("xpunjabi", "a-collection-catalog"),
     };
     let catalog_url = format!("https://{}.github.io/{}/", owner, repo_name);
+
+    // v0.17.0: Upload static product pages (for OG link previews).
+    // Each product gets its own HTML file at products/<slug>.html with
+    // proper OG meta tags. FB/WhatsApp crawlers read these tags directly
+    // (they don't execute JS), so shared product links show rich previews.
+    let mut product_pages_uploaded = 0usize;
+    let mut uploaded_product_slugs: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for product in &catalog.products {
+        let slug = product.sku.as_deref().unwrap_or("product");
+        // Sanitize slug for filename (alphanumeric + hyphens only)
+        let safe_slug: String = slug.chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .collect();
+        let safe_slug = safe_slug.trim_matches('-').to_string();
+        if safe_slug.is_empty() { continue; }
+
+        let html = generate_product_page(product, &catalog, &catalog_url);
+        let html_b64 = base64::engine::general_purpose::STANDARD.encode(html.as_bytes());
+        let path = format!("products/{}.html", safe_slug);
+        let msg = format!("Update product page: {}", safe_slug);
+        match upload_file(&client, &api_base, github_token, &path, &msg, &html_b64).await {
+            Ok(_) => {
+                product_pages_uploaded += 1;
+                uploaded_product_slugs.insert(format!("{}.html", safe_slug));
+            },
+            Err(e) => errors.push(format!("product page {}: {}", safe_slug, e)),
+        }
+    }
+
+    // v0.17.0: Delete orphan product pages (products no longer in catalog)
+    if let Ok(existing_pages) = list_repo_directory(&client, repo, github_token, "products").await {
+        for file in existing_pages {
+            if !uploaded_product_slugs.contains(&file.name) {
+                if let Err(e) = delete_file(
+                    &client, &api_base, github_token,
+                    &format!("products/{}", file.name),
+                    &format!("Delete orphan product page: {}", file.name),
+                    &file.sha,
+                ).await {
+                    errors.push(format!("delete page {}: {}", file.name, e));
+                }
+            }
+        }
+    }
+
+    let _ = product_pages_uploaded;  // Could add to PublishResult if needed
 
     let success = errors.is_empty();
     Ok(PublishResult {
