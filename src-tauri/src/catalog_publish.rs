@@ -205,7 +205,7 @@ pub fn generate_product_page(
     let product_url = format!("{}/products/{}.html", base_url, slug);
     let brand = html_escape(&catalog.brand);
 
-    format!(r#"<!DOCTYPE html>
+    format!(r##"<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -242,7 +242,7 @@ pub fn generate_product_page(
     <a href="../#/{slug}">Click here to view {title}</a>
   </noscript>
 </body>
-</html>"#)
+</html>"##)
 }
 
 fn html_escape(s: &str) -> String {
