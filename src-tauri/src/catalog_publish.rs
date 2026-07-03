@@ -203,12 +203,18 @@ pub fn generate_product_page(
         .as_ref()
         .map(|d| html_escape(&d.chars().take(200).collect::<String>()))
         .unwrap_or_else(|| format!("{} — Rs. {}", product.name, format_price(product.sale_price)));
+    // v0.17.3: Trim trailing slash from base_url to avoid double-slash in
+    // og:url and og:image meta tags. catalog_url is constructed with a
+    // trailing slash (https://owner.github.io/repo/), so without trimming
+    // we'd get "https://owner.github.io/repo//products/..." which FB/WhatsApp
+    // crawlers may treat as a distinct (broken) URL.
+    let base = base_url.trim_end_matches('/');
     let image_url = if !product.images.is_empty() {
-        format!("{}/data/images/{}", base_url, product.images[0])
+        format!("{}/data/images/{}", base, product.images[0])
     } else {
-        format!("{}/icon-512.png", base_url)
+        format!("{}/icon-512.png", base)
     };
-    let product_url = format!("{}/products/{}.html", base_url, safe_slug);
+    let product_url = format!("{}/products/{}.html", base, safe_slug);
     let brand = html_escape(&catalog.brand);
 
     format!(r##"<!DOCTYPE html>
@@ -264,6 +270,7 @@ fn format_price(n: f64) -> String {
 }
 
 /// v0.17.2: Sanitize SKU into a URL-safe filename slug.
+/// v0.17.3: Collapse consecutive hyphens (MULTI###HASH → MULTI-HASH, not MULTI---HASH).
 ///
 /// SKUs like "D#26", "DS#10", "VOLUME#48 DS#14" contain characters
 /// (`#`, spaces, etc.) that break URL handling:
@@ -271,13 +278,17 @@ fn format_price(n: f64) -> String {
 ///   - spaces break URL parsing (need %20 encoding)
 ///   - other special chars can cause GitHub Pages 404s
 ///
-/// This function replaces every non-alphanumeric/non-hyphen character
-/// with a hyphen, then trims leading/trailing hyphens.
+/// This function:
+///   1. Replaces every non-alphanumeric/non-hyphen character with a hyphen
+///   2. Collapses consecutive hyphens into one (v0.17.3 fix)
+///   3. Trims leading/trailing hyphens
 ///
-/// Examples:
+/// Examples (v0.17.3 behavior):
 ///   "D#26"              → "D-26"
 ///   "DS#10"             → "DS-10"
 ///   "VOLUME#48 DS#14"   → "VOLUME-48-DS-14"
+///   "MULTI###HASH"      → "MULTI-HASH"     (was "MULTI---HASH" in v0.17.2)
+///   "AB##CD"            → "AB-CD"          (was "AB--CD" in v0.17.2)
 ///   "AH-2026-V29-DS10"  → "AH-2026-V29-DS10"  (already safe, unchanged)
 ///   "DE-LA65-P30634"    → "DE-LA65-P30634"    (already safe, unchanged)
 ///
@@ -286,12 +297,37 @@ fn format_price(n: f64) -> String {
 ///   2. upload loop in publish_catalog() — for the actual filename on disk
 ///
 /// If they diverge, FB/WhatsApp preview shows a URL that 404s when clicked.
+///
+/// MUST match catalog app.js sanitizeSku() exactly (case-sensitive).
+/// Catalog app.js v0.17.3:
+///   sku.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '')
 fn sanitize_slug(sku: &str) -> String {
     let sanitized: String = sku
         .chars()
         .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
         .collect();
-    sanitized.trim_matches('-').to_string()
+    // v0.17.3: collapse consecutive hyphens (MULTI---HASH → MULTI-HASH).
+    // std::replace doesn't handle variable-length runs in one pass, so loop.
+    let collapsed = collapse_hyphens(&sanitized);
+    collapsed.trim_matches('-').to_string()
+}
+
+/// v0.17.3: Helper — collapse runs of 2+ hyphens into a single hyphen.
+fn collapse_hyphens(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_was_hyphen = false;
+    for c in s.chars() {
+        if c == '-' {
+            if !prev_was_hyphen {
+                out.push('-');
+            }
+            prev_was_hyphen = true;
+        } else {
+            out.push(c);
+            prev_was_hyphen = false;
+        }
+    }
+    out
 }
 
 // ============================================================
