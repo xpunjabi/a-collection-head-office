@@ -415,12 +415,11 @@ fn generate_meta_feed(catalog: &CatalogJson, base_url: &str) -> String {
 
     for product in &catalog.products {
         let title = xml_escape(&product.name);
-        let description = xml_escape(
-            product.description
-                .as_ref()
-                .map(|d| d.clone())
-                .unwrap_or_else(|| format!("{} — Rs. {}", product.name, format_price(product.sale_price)))
-        );
+        let description_owned = product.description
+            .as_ref()
+            .map(|d| d.clone())
+            .unwrap_or_else(|| format!("{} — Rs. {}", product.name, format_price(product.sale_price)));
+        let description = xml_escape(&description_owned);
         let product_id = product.id;
 
         // Product URL — points to static product page (v0.17.0+)
