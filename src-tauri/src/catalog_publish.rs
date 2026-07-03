@@ -192,6 +192,12 @@ pub fn generate_product_page(
     base_url: &str,
 ) -> String {
     let slug = product.sku.as_deref().unwrap_or("product");
+    // v0.17.2: Use sanitized slug for the OG `og:url` meta tag and the
+    // file on disk (kept in sync with upload loop). Raw `slug` (original SKU)
+    // is still used in the redirect hash so the SPA can match it against
+    // p.sku (which contains the original `#`, spaces, etc.).
+    // Example: SKU "D#26" → safe_slug "D-26" (file + og:url), redirect hash "D#26".
+    let safe_slug = sanitize_slug(slug);
     let title = html_escape(&product.name);
     let description = product.description
         .as_ref()
@@ -202,7 +208,7 @@ pub fn generate_product_page(
     } else {
         format!("{}/icon-512.png", base_url)
     };
-    let product_url = format!("{}/products/{}.html", base_url, slug);
+    let product_url = format!("{}/products/{}.html", base_url, safe_slug);
     let brand = html_escape(&catalog.brand);
 
     format!(r##"<!DOCTYPE html>
@@ -255,6 +261,37 @@ fn html_escape(s: &str) -> String {
 
 fn format_price(n: f64) -> String {
     format!("{:.0}", n)
+}
+
+/// v0.17.2: Sanitize SKU into a URL-safe filename slug.
+///
+/// SKUs like "D#26", "DS#10", "VOLUME#48 DS#14" contain characters
+/// (`#`, spaces, etc.) that break URL handling:
+///   - `#` is a URL fragment identifier → browser ignores everything after it
+///   - spaces break URL parsing (need %20 encoding)
+///   - other special chars can cause GitHub Pages 404s
+///
+/// This function replaces every non-alphanumeric/non-hyphen character
+/// with a hyphen, then trims leading/trailing hyphens.
+///
+/// Examples:
+///   "D#26"              → "D-26"
+///   "DS#10"             → "DS-10"
+///   "VOLUME#48 DS#14"   → "VOLUME-48-DS-14"
+///   "AH-2026-V29-DS10"  → "AH-2026-V29-DS10"  (already safe, unchanged)
+///   "DE-LA65-P30634"    → "DE-LA65-P30634"    (already safe, unchanged)
+///
+/// MUST be used in TWO places to keep them in sync:
+///   1. generate_product_page() — for OG `og:url` meta tag + redirect hash
+///   2. upload loop in publish_catalog() — for the actual filename on disk
+///
+/// If they diverge, FB/WhatsApp preview shows a URL that 404s when clicked.
+fn sanitize_slug(sku: &str) -> String {
+    let sanitized: String = sku
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+        .collect();
+    sanitized.trim_matches('-').to_string()
 }
 
 // ============================================================
@@ -636,11 +673,10 @@ pub async fn upload_to_github(
 
     for product in &catalog.products {
         let slug = product.sku.as_deref().unwrap_or("product");
-        // Sanitize slug for filename (alphanumeric + hyphens only)
-        let safe_slug: String = slug.chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
-            .collect();
-        let safe_slug = safe_slug.trim_matches('-').to_string();
+        // v0.17.2: Use shared sanitize_slug() helper (kept in sync with
+        // generate_product_page's og:url meta tag). Diverging here would
+        // cause FB/WhatsApp preview URL to 404 when clicked.
+        let safe_slug = sanitize_slug(slug);
         if safe_slug.is_empty() { continue; }
 
         let html = generate_product_page(product, &catalog, &catalog_url);
