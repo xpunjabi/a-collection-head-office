@@ -331,6 +331,214 @@ fn collapse_hyphens(s: &str) -> String {
 }
 
 // ============================================================
+// v0.18.0: META CATALOG FEED (Google Merchant RSS XML)
+// ============================================================
+
+/// Default Google Product Category for clothing/apparel.
+/// 1604 = Apparel & Accessories > Clothing
+///
+/// Defined as a constant so it can be changed in one place if Ali bhai
+/// ever expands to other product types (shoes, accessories, etc.).
+/// Future: could be promoted to a per-product field or settings.json.
+const DEFAULT_GOOGLE_PRODUCT_CATEGORY: &str = "1604";
+
+/// v0.18.0: XML escape — escapes the 5 mandatory XML characters.
+/// Distinct from html_escape() because XML has stricter rules for
+/// apostrophes (`'` → `&apos;` vs HTML `&#x27;`).
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+     .replace('<', "&lt;")
+     .replace('>', "&gt;")
+     .replace('"', "&quot;")
+     .replace('\'', "&apos;")
+}
+
+/// v0.18.0: Generate Meta-compatible product feed in Google Merchant RSS XML format.
+///
+/// Spec: https://support.google.com/merchants/answer/160589
+/// Compatible with: Meta Commerce Manager, Google Merchant Center, Pinterest.
+///
+/// Architecture:
+/// - Pure function (no I/O) — takes CatalogJson, returns XML string
+/// - Reuses sanitize_slug() for product URLs (consistency with v0.17.x)
+/// - Reuses base_url.trim_end_matches('/') for clean URLs (v0.17.3 fix)
+/// - Separate `<g:additional_image_link>` element per additional image
+///   (per ChatGPT recommendation — more standard than comma-separated)
+///
+/// Field mapping (HO PublicProduct → Google/Meta feed):
+///   g:id                    ← product.id           (SQLite integer, NEVER changes)
+///   g:title                 ← product.name
+///   g:description           ← product.description  (fallback: name + price)
+///   g:link                  ← catalog_url + products/<safe_slug>.html
+///   g:image_link            ← catalog_url + data/images/<images[0]>
+///   g:additional_image_link ← one element per remaining image (max 10 total)
+///   g:price                 ← sale_price + " PKR"  (2 decimal places)
+///   g:availability          ← "in stock" if availability == "available", else "out of stock"
+///   g:brand                 ← catalog.brand
+///   g:condition             ← "new" (hardcoded — Ali sells only new stock)
+///   g:product_type          ← product.category     (HO's internal category)
+///   g:google_product_category ← DEFAULT_GOOGLE_PRODUCT_CATEGORY constant
+///   g:custom_label_0        ← product.color
+///   g:custom_label_1        ← product.fabric
+///   g:custom_label_2        ← product.season
+///   g:mpn                   ← sanitize_slug(product.sku)  (Manufacturer Part Number)
+///   g:identifier_exists     ← "no" (no GTIN/MPN globally registered)
+///
+/// Future fields (easy to add — just append inside <item>):
+///   g:sale_price, g:color, g:size, g:material, g:gender, g:age_group,
+///   g:pattern, g:shipping, g:availability_date, g:custom_label_3, g:custom_label_4
+///
+/// Layout:
+/// - `feed.xml` at catalog repo ROOT (URL: https://owner.github.io/repo/feed.xml)
+/// - Public, raw — Meta Commerce Manager fetches this URL daily
+fn generate_meta_feed(catalog: &CatalogJson, base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let brand = xml_escape(&catalog.brand);
+
+    // RFC 822 date for last_build_date (e.g. "Wed, 03 Jul 2026 11:30:00 +0000")
+    let last_build_date = match chrono::DateTime::parse_from_rfc3339(&catalog.published_at) {
+        Ok(dt) => dt.format("%a, %d %b %Y %H:%M:%S %z").to_string(),
+        Err(_) => catalog.published_at.clone(),
+    };
+
+    let mut xml = String::with_capacity(8192);
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<rss version=\"2.0\" xmlns:g=\"http://base.google.com/ns/1.0\">\n");
+    xml.push_str("  <channel>\n");
+    xml.push_str(&format!("    <title>{} — Product Catalog</title>\n", brand));
+    xml.push_str(&format!("    <link>{}/</link>\n", base));
+    xml.push_str(&format!(
+        "    <description>Latest products from {} — order via WhatsApp {}</description>\n",
+        brand, catalog.whatsapp_number
+    ));
+    xml.push_str(&format!("    <last_build_date>{}</last_build_date>\n", xml_escape(&last_build_date)));
+
+    for product in &catalog.products {
+        let title = xml_escape(&product.name);
+        let description = xml_escape(
+            product.description
+                .as_ref()
+                .map(|d| d.clone())
+                .unwrap_or_else(|| format!("{} — Rs. {}", product.name, format_price(product.sale_price)))
+        );
+        let product_id = product.id;
+
+        // Product URL — points to static product page (v0.17.0+)
+        let slug_raw = product.sku.as_deref().unwrap_or("product");
+        let safe_slug = sanitize_slug(slug_raw);
+        let product_url = if safe_slug.is_empty() {
+            format!("{}/", base)
+        } else {
+            format!("{}/products/{}.html", base, safe_slug)
+        };
+
+        // Main image + additional images (absolute HTTPS URLs)
+        let (image_link, additional_images): (Option<String>, Vec<String>) =
+            if product.images.is_empty() {
+                (None, Vec::new())
+            } else {
+                let main = format!("{}/data/images/{}", base, product.images[0]);
+                let rest: Vec<String> = product.images.iter()
+                    .skip(1)
+                    .take(10) // Google Merchant max 10 additional images
+                    .map(|img| format!("{}/data/images/{}", base, img))
+                    .collect();
+                (Some(main), rest)
+            };
+
+        // Availability mapping
+        let availability = if product.availability.eq_ignore_ascii_case("available") {
+            "in stock"
+        } else {
+            "out of stock"
+        };
+
+        // Price (2 decimal places + PKR currency)
+        let price = format!("{:.2} PKR", product.sale_price);
+
+        // Optional fields (only emit if non-empty)
+        let product_type = product.category.as_ref().filter(|s| !s.is_empty());
+        let custom_label_0 = product.color.as_ref().filter(|s| !s.is_empty());
+        let custom_label_1 = product.fabric.as_ref().filter(|s| !s.is_empty());
+        let custom_label_2 = product.season.as_ref().filter(|s| !s.is_empty());
+
+        // Build <item>
+        xml.push_str("    <item>\n");
+        xml.push_str(&format!("      <g:id>{}</g:id>\n", product_id));
+        xml.push_str(&format!("      <g:title>{}</g:title>\n", title));
+        xml.push_str(&format!("      <g:description>{}</g:description>\n", description));
+        xml.push_str(&format!("      <g:link>{}</g:link>\n", xml_escape(&product_url)));
+        if let Some(img) = image_link {
+            xml.push_str(&format!("      <g:image_link>{}</g:image_link>\n", xml_escape(&img)));
+        }
+        // Separate element per additional image (per ChatGPT recommendation)
+        for img in &additional_images {
+            xml.push_str(&format!("      <g:additional_image_link>{}</g:additional_image_link>\n", xml_escape(img)));
+        }
+        xml.push_str(&format!("      <g:price>{}</g:price>\n", price));
+        xml.push_str(&format!("      <g:availability>{}</g:availability>\n", availability));
+        xml.push_str(&format!("      <g:brand>{}</g:brand>\n", brand));
+        xml.push_str("      <g:condition>new</g:condition>\n");
+        if let Some(pt) = product_type {
+            xml.push_str(&format!("      <g:product_type>{}</g:product_type>\n", xml_escape(pt)));
+        }
+        xml.push_str(&format!("      <g:google_product_category>{}</g:google_product_category>\n", DEFAULT_GOOGLE_PRODUCT_CATEGORY));
+        if let Some(cl) = custom_label_0 {
+            xml.push_str(&format!("      <g:custom_label_0>{}</g:custom_label_0>\n", xml_escape(cl)));
+        }
+        if let Some(cl) = custom_label_1 {
+            xml.push_str(&format!("      <g:custom_label_1>{}</g:custom_label_1>\n", xml_escape(cl)));
+        }
+        if let Some(cl) = custom_label_2 {
+            xml.push_str(&format!("      <g:custom_label_2>{}</g:custom_label_2>\n", xml_escape(cl)));
+        }
+        if !safe_slug.is_empty() {
+            xml.push_str(&format!("      <g:mpn>{}</g:mpn>\n", xml_escape(&safe_slug)));
+        }
+        xml.push_str("      <g:identifier_exists>no</g:identifier_exists>\n");
+        xml.push_str("    </item>\n");
+    }
+
+    xml.push_str("  </channel>\n");
+    xml.push_str("</rss>\n");
+    xml
+}
+
+/// v0.18.0: Basic XML well-formedness validation.
+///
+/// Checks:
+/// - Starts with `<?xml` declaration
+/// - Has `<rss` root element with proper closing `</rss>`
+/// - Has `<channel>` with closing `</channel>`
+/// - Number of `<item>` opens == number of `</item>` closes
+///
+/// NOT a full XML parser — just sanity checks to prevent uploading
+/// a catastrophically broken feed. If Meta/Google rejects a feed
+/// that passes these checks, we'll add more validation later.
+///
+/// Returns Ok(()) if valid, Err(message) if not.
+fn validate_feed_xml(xml: &str) -> Result<(), String> {
+    if !xml.starts_with("<?xml") {
+        return Err("Feed XML missing <?xml declaration".to_string());
+    }
+    if !xml.contains("<rss") || !xml.contains("</rss>") {
+        return Err("Feed XML missing <rss> root element".to_string());
+    }
+    if !xml.contains("<channel>") || !xml.contains("</channel>") {
+        return Err("Feed XML missing <channel> element".to_string());
+    }
+    let open_items = xml.matches("<item>").count();
+    let close_items = xml.matches("</item>").count();
+    if open_items != close_items {
+        return Err(format!(
+            "Feed XML item tag mismatch: {} opens vs {} closes",
+            open_items, close_items
+        ));
+    }
+    Ok(())
+}
+
+// ============================================================
 // IMAGE: Generate WebP versions for catalog
 // ============================================================
 
@@ -745,6 +953,33 @@ pub async fn upload_to_github(
     }
 
     let _ = product_pages_uploaded;  // Could add to PublishResult if needed
+
+    // v0.18.0: Generate + upload Meta Catalog Feed (Google Merchant RSS XML).
+    // Completely additive — no existing flow modified. If feed generation or
+    // upload fails, errors[] is pushed but publish succeeds (feed is non-critical).
+    // Feed is uploaded to repo ROOT as feed.xml — public URL:
+    //   https://<owner>.github.io/<repo>/feed.xml
+    // Meta Commerce Manager fetches this URL on a schedule (daily by default).
+    let feed_xml = generate_meta_feed(catalog, &catalog_url);
+    match validate_feed_xml(&feed_xml) {
+        Ok(()) => {
+            let feed_b64 = base64::engine::general_purpose::STANDARD.encode(feed_xml.as_bytes());
+            let feed_path = "feed.xml";
+            let feed_msg = format!(
+                "Update Meta Catalog feed — {} products, {}",
+                products_published, catalog.version
+            );
+            if let Err(e) = upload_file(
+                &client, &api_base, github_token, feed_path, &feed_msg, &feed_b64,
+            ).await {
+                errors.push(format!("feed.xml: {}", e));
+            }
+        },
+        Err(e) => {
+            // Validation failed — don't upload broken feed, just log error
+            errors.push(format!("feed.xml validation: {}", e));
+        }
+    }
 
     let success = errors.is_empty();
     Ok(PublishResult {
