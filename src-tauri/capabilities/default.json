@@ -9,6 +9,7 @@
     "core:default",
     "shell:default",
     "dialog:default",
+    "dialog:allow-open",
     "fs:default",
     "clipboard-manager:default",
     "clipboard-manager:allow-write-image",

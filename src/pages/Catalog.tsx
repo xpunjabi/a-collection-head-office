@@ -708,15 +708,15 @@ export default function Catalog() {
                   </td>
                   <td className="py-3 px-3">
                     <div className="flex items-center space-x-3">
-                      <div className="w-9 h-9 bg-slate-800 rounded-lg flex items-center justify-center overflow-hidden border border-gray-700 shrink-0">
+                      <div className="w-16 h-16 bg-slate-800 rounded-lg flex items-center justify-center overflow-hidden border border-gray-700 shrink-0">
                         {(() => {
                           try {
                             const imgs: string[] = JSON.parse(p.images || '[]')
                             return imgs.length > 0 ? (
                               <ProductImage filename={imgs[0]} alt={p.name} className="object-contain w-full h-full" />
-                            ) : <ImageIcon size={16} className="text-gray-500" />
+                            ) : <ImageIcon size={20} className="text-gray-500" />
                           } catch {
-                            return <ImageIcon size={16} className="text-gray-500" />
+                            return <ImageIcon size={20} className="text-gray-500" />
                           }
                         })()}
                       </div>
@@ -949,15 +949,15 @@ export default function Catalog() {
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {images.map((imgName, idx) => (
-                    <div key={idx} className="relative w-14 h-14 bg-slate-950 border border-gray-800 rounded-lg overflow-hidden flex items-center justify-center">
+                    <div key={idx} className="relative w-24 h-24 bg-slate-950 border border-gray-800 rounded-lg overflow-hidden flex items-center justify-center">
                       <ProductImage filename={imgName} alt={`Product image ${idx + 1}`} className="object-contain w-full h-full" />
                       <button type="button" onClick={() => handleRemoveImage(idx)}
-                        className="absolute top-0.5 right-0.5 bg-red-600 text-white rounded-full p-0.5"><X size={8} /></button>
+                        className="absolute top-0.5 right-0.5 bg-red-600 text-white rounded-full p-0.5"><X size={10} /></button>
                     </div>
                   ))}
                   <button type="button" onClick={handleSelectImage}
-                    className="w-14 h-14 bg-slate-950 hover:bg-slate-900 border border-dashed border-gray-800 hover:border-violet-500 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:text-violet-400 transition-colors">
-                    <Plus size={14} /><span className="text-[8px]">Photo</span>
+                    className="w-24 h-24 bg-slate-950 hover:bg-slate-900 border border-dashed border-gray-800 hover:border-violet-500 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:text-violet-400 transition-colors">
+                    <Plus size={20} /><span className="text-[10px]">Photo</span>
                   </button>
                 </div>
                 <p className="text-[10px] text-gray-600 mt-1">Tip: Screenshot lo (Print Screen), phir yahan Ctrl+V paste karo</p>

@@ -51,6 +51,7 @@ fn main() {
             commands::get_image_as_base64,
             commands::save_base64_image,
             commands::save_image_for_share,
+            commands::save_drafts_to_folder_with_path,
             commands::get_inventory_summary,
             commands::get_low_stock,
             commands::get_dead_stock,

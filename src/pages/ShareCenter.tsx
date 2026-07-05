@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 import { useAppStore } from '../stores/store'
 import {
   Share2, MessageCircle, Facebook, Instagram, Copy, Check,
   AlertTriangle, RefreshCw, Sparkle, Send, Save, Trash2, Brain,
-  Edit3, Hash, Image as ImageIcon
+  Edit3, Hash, Image as ImageIcon, FolderDown
 } from 'lucide-react'
 import {
   shareToPlatform,
@@ -464,6 +465,65 @@ Write in Hinglish. Return ONLY the JSON.`
     alert(`${generatedCaptions.length} draft(s) saved!`)
   }
 
+  // v0.20.0: Save Drafts to custom folder — captions + HD images
+  // Ali bhai's requirement: pick folder, save full caption + all HD images of product
+  const [isSavingToFolder, setIsSavingToFolder] = useState(false)
+  const handleSaveDraftsToFolder = async () => {
+    const generatedCaptions = Object.entries(captions).filter(([_, text]) => text && text.trim())
+    if (generatedCaptions.length === 0) {
+      alert('No captions to save. Generate at least one first.')
+      return
+    }
+    const product = selectedProduct
+    if (!product) {
+      alert('Please select a product first.')
+      return
+    }
+
+    // Parse image filenames from product
+    let imageFilenames: string[] = []
+    try {
+      imageFilenames = JSON.parse((product as any).images || '[]')
+    } catch {
+      imageFilenames = []
+    }
+
+    if (imageFilenames.length === 0) {
+      if (!confirm('No images found for this product. Save captions only?')) {
+        return
+      }
+    }
+
+    // Open folder picker
+    try {
+      const selectedFolder = await open({ directory: true, multiple: false })
+      if (!selectedFolder) {
+        return // User cancelled
+      }
+
+      setIsSavingToFolder(true)
+
+      // Build captions map (platform -> text)
+      const captionsMap: Record<string, string> = {}
+      for (const [platform, text] of generatedCaptions) {
+        captionsMap[platform] = text
+      }
+
+      const resultPath = await invoke<string>('save_drafts_to_folder_with_path', {
+        folderPath: selectedFolder,
+        productName: product.name,
+        captions: captionsMap,
+        imageFilenames: imageFilenames,
+      })
+
+      alert(`✓ Drafts saved to folder!\n\nLocation: ${resultPath}\n\nContents:\n- ${generatedCaptions.length} caption(s) as .txt files\n- ${imageFilenames.length} HD image(s)\n- README.txt summary`)
+    } catch (err) {
+      alert(`Failed to save drafts to folder: ${err}`)
+    } finally {
+      setIsSavingToFolder(false)
+    }
+  }
+
   const handleDeleteDraft = async (id: string) => {
     const updated = drafts.filter(d => d.id !== id)
     await saveDraftsList(updated)
@@ -657,6 +717,14 @@ Write in Hinglish. Return ONLY the JSON.`
                 className="flex-1 flex items-center justify-center space-x-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-gray-200 rounded-lg text-xs font-medium"
               >
                 <Save size={12} /><span>Save Drafts</span>
+              </button>
+              <button
+                onClick={handleSaveDraftsToFolder}
+                disabled={Object.keys(captions).length === 0 || isSavingToFolder}
+                className="flex-1 flex items-center justify-center space-x-1 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-xs font-medium"
+                title="Save captions + HD images to a folder you choose"
+              >
+                <FolderDown size={12} /><span>{isSavingToFolder ? 'Saving...' : 'Save to Folder'}</span>
               </button>
               <button
                 onClick={handleCopyAll}
