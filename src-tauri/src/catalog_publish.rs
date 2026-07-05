@@ -186,36 +186,133 @@ pub fn build_catalog_json(
 ///
 /// This is the ONLY way to get per-product OG previews on GitHub Pages
 /// (static hosting, no server-side rendering).
+/// v0.19.0: Generate a polished, branded static product page.
+///
+/// Design goals (per Ali bhai's feedback on Nishat screenshot):
+/// - Premium, professional look (not "Redirecting..." text on blank page)
+/// - Brand identity: maroon + gold + cream (Narowal women/girls target audience)
+/// - Mobile-first (max-width 480px, most users on phone)
+/// - WhatsApp-first (no cart, direct order via WhatsApp CTA)
+/// - Discount badges (SAVE Rs. X / X% OFF) when retail > sale
+/// - Image gallery with thumbnail swap
+/// - Auto-redirect to SPA after 2s (preserves existing UX)
+///
+/// Architecture:
+/// - Single self-contained HTML file (inline CSS + JS, no external deps)
+/// - OG meta tags preserved (FB/WhatsApp crawler compatibility)
+/// - CSS variables for brand tokens (easy to theme later)
+/// - All CSS braces escaped as {{ }} for Rust format! macro
 pub fn generate_product_page(
     product: &PublicProduct,
     catalog: &CatalogJson,
     base_url: &str,
 ) -> String {
     let slug = product.sku.as_deref().unwrap_or("product");
-    // v0.17.2: Use sanitized slug for the OG `og:url` meta tag and the
-    // file on disk (kept in sync with upload loop). Raw `slug` (original SKU)
-    // is still used in the redirect hash so the SPA can match it against
-    // p.sku (which contains the original `#`, spaces, etc.).
-    // Example: SKU "D#26" → safe_slug "D-26" (file + og:url), redirect hash "D#26".
     let safe_slug = sanitize_slug(slug);
     let title = html_escape(&product.name);
-    let description = product.description
-        .as_ref()
-        .map(|d| html_escape(&d.chars().take(200).collect::<String>()))
-        .unwrap_or_else(|| format!("{} — Rs. {}", product.name, format_price(product.sale_price)));
-    // v0.17.3: Trim trailing slash from base_url to avoid double-slash in
-    // og:url and og:image meta tags. catalog_url is constructed with a
-    // trailing slash (https://owner.github.io/repo/), so without trimming
-    // we'd get "https://owner.github.io/repo//products/..." which FB/WhatsApp
-    // crawlers may treat as a distinct (broken) URL.
     let base = base_url.trim_end_matches('/');
+
+    // Description (escaped, fallback to name + price)
+    let description_owned = product.description
+        .as_ref()
+        .map(|d| d.chars().take(200).collect::<String>())
+        .unwrap_or_else(|| format!("{} — Rs. {}", product.name, format_price(product.sale_price)));
+    let description = html_escape(&description_owned);
+
+    // Image URLs (absolute HTTPS)
     let image_url = if !product.images.is_empty() {
         format!("{}/data/images/{}", base, product.images[0])
     } else {
         format!("{}/icon-512.png", base)
     };
-    let product_url = format!("{}/products/{}.html", base, safe_slug);
+    let product_url = if safe_slug.is_empty() {
+        format!("{}/", base)
+    } else {
+        format!("{}/products/{}.html", base, safe_slug)
+    };
     let brand = html_escape(&catalog.brand);
+
+    // Subtitle: color • fabric • season (only non-empty, joined with bullet)
+    let subtitle_parts: Vec<&str> = vec![
+        product.color.as_deref().unwrap_or(""),
+        product.fabric.as_deref().unwrap_or(""),
+        product.season.as_deref().unwrap_or(""),
+    ].into_iter().filter(|s| !s.is_empty()).collect();
+    let subtitle = html_escape(&subtitle_parts.join(" \u{2022} "));
+
+    // Price block (with discount badge if retail > sale)
+    let sale_price_str = format!("Rs. {}", format_price(product.sale_price));
+    let (retail_price_html, discount_badge_html) = match product.retail_price {
+        Some(retail) if retail > product.sale_price => {
+            let retail_str = format!("Rs. {}", format_price(retail));
+            let saved = retail - product.sale_price;
+            let pct = ((saved / retail) * 100.0).round() as u32;
+            let retail_html = format!(
+                "<span class=\"price-retail\">{}</span>",
+                html_escape(&retail_str)
+            );
+            let badge_html = format!(
+                "<span class=\"discount-badge\">SAVE Rs. {} ({}% OFF)</span>",
+                format_price(saved), pct
+            );
+            (retail_html, badge_html)
+        }
+        _ => (String::new(), String::new()),
+    };
+
+    // Availability badge
+    let availability_html = if product.availability.eq_ignore_ascii_case("available") {
+        "<span class=\"availability in-stock\">In Stock</span>".to_string()
+    } else {
+        "<span class=\"availability out-of-stock\">Out of Stock</span>".to_string()
+    };
+
+    // Details grid (only non-empty fields)
+    let mut details_html = String::new();
+    let mut add_detail = |label: &str, value: &str| {
+        if !value.is_empty() {
+            details_html.push_str(&format!(
+                "<div class=\"detail-item\"><span class=\"detail-label\">{}</span><span class=\"detail-value\">{}</span></div>",
+                html_escape(label), html_escape(value)
+            ));
+        }
+    };
+    add_detail("Category", product.category.as_deref().unwrap_or(""));
+    add_detail("Color", product.color.as_deref().unwrap_or(""));
+    add_detail("Fabric", product.fabric.as_deref().unwrap_or(""));
+    add_detail("Season", product.season.as_deref().unwrap_or(""));
+    if !safe_slug.is_empty() {
+        add_detail("SKU", &safe_slug);
+    }
+
+    // Thumbnails (first image marked active, then additional images, click to swap)
+    let mut thumbnails_html = String::new();
+    if !product.images.is_empty() {
+        thumbnails_html.push_str("<div class=\"thumbnails\">");
+        thumbnails_html.push_str(&format!(
+            "<img src=\"{}\" class=\"thumb active\" onclick=\"swapImage(this)\" alt=\"\" />",
+            html_escape(&image_url)
+        ));
+        for img in product.images.iter().skip(1).take(8) {
+            let url = format!("{}/data/images/{}", base, img);
+            thumbnails_html.push_str(&format!(
+                "<img src=\"{}\" class=\"thumb\" onclick=\"swapImage(this)\" alt=\"\" />",
+                html_escape(&url)
+            ));
+        }
+        thumbnails_html.push_str("</div>");
+    }
+
+    // WhatsApp CTA link (pre-filled Hinglish message)
+    let wa_message = format!(
+        "Assalam o alaikum! Main is product me interested hoon:\n\n*{}*\nSKU: {}\nPrice: {}\n\nKya ye available hai?",
+        product.name, safe_slug, sale_price_str
+    );
+    let wa_link = format!(
+        "https://wa.me/{}?text={}",
+        catalog.whatsapp_number,
+        urlencoding::encode(&wa_message)
+    );
 
     format!(r##"<!DOCTYPE html>
 <html lang="en">
@@ -240,18 +337,272 @@ pub fn generate_product_page(
   <meta name="twitter:description" content="{description}" />
   <meta name="twitter:image" content="{image_url}" />
 
-  <!-- Theme -->
-  <meta name="theme-color" content="#000000" />
+  <meta name="theme-color" content="#8B1538" />
+
+  <style>
+    :root {{
+      --brand-primary: #8B1538;
+      --brand-accent: #C9A961;
+      --brand-bg: #FFF8F0;
+      --brand-surface: #FFFFFF;
+      --brand-text: #1F2937;
+      --brand-muted: #6B7280;
+      --brand-danger: #DC2626;
+      --whatsapp: #25D366;
+      --whatsapp-dark: #128C7E;
+      --shadow-sm: 0 2px 8px rgba(139, 21, 56, 0.06);
+      --shadow-md: 0 4px 16px rgba(139, 21, 56, 0.1);
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--brand-bg);
+      color: var(--brand-text);
+      line-height: 1.6;
+    }}
+    .container {{
+      max-width: 480px;
+      margin: 0 auto;
+      background: var(--brand-surface);
+      min-height: 100vh;
+      box-shadow: var(--shadow-md);
+    }}
+    .brand-header {{
+      background: linear-gradient(135deg, var(--brand-primary) 0%, #6B1028 100%);
+      color: white;
+      padding: 20px 24px;
+      text-align: center;
+      position: relative;
+    }}
+    .brand-header::after {{
+      content: "";
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--brand-accent);
+    }}
+    .brand-name {{
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }}
+    .brand-tagline {{
+      font-size: 0.7rem;
+      color: var(--brand-accent);
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }}
+    .loading-bar {{
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--brand-accent), transparent);
+      animation: shimmer 1.5s infinite;
+    }}
+    @keyframes shimmer {{
+      0% {{ transform: translateX(-100%); }}
+      100% {{ transform: translateX(100%); }}
+    }}
+    .gallery {{ padding: 16px; }}
+    .main-image-wrap {{
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      background: #f3f4f6;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }}
+    .main-image {{
+      width: 100%; height: 100%;
+      object-fit: cover;
+      display: block;
+    }}
+    .thumbnails {{
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }}
+    .thumb {{
+      width: 56px; height: 56px;
+      border-radius: 8px;
+      object-fit: cover;
+      cursor: pointer;
+      border: 2px solid transparent;
+      flex-shrink: 0;
+      transition: border-color 0.2s;
+    }}
+    .thumb.active {{ border-color: var(--brand-primary); }}
+    .thumb:hover {{ border-color: var(--brand-accent); }}
+    .product-info {{ padding: 0 20px 20px; }}
+    .product-title {{
+      font-size: 1.25rem;
+      font-weight: 700;
+      line-height: 1.3;
+      margin-bottom: 6px;
+    }}
+    .product-subtitle {{
+      font-size: 0.85rem;
+      color: var(--brand-muted);
+      margin-bottom: 16px;
+    }}
+    .price-block {{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 16px 0;
+      padding: 14px 16px;
+      background: #FFF8F0;
+      border-radius: 10px;
+      border-left: 4px solid var(--brand-primary);
+    }}
+    .price-sale {{
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: var(--brand-primary);
+    }}
+    .price-retail {{
+      font-size: 1rem;
+      color: var(--brand-muted);
+      text-decoration: line-through;
+    }}
+    .discount-badge {{
+      background: var(--brand-danger);
+      color: white;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 4px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.5px;
+    }}
+    .availability {{
+      font-size: 0.85rem;
+      font-weight: 600;
+      display: inline-block;
+      margin-bottom: 8px;
+    }}
+    .availability.in-stock {{ color: #059669; }}
+    .availability.out-of-stock {{ color: var(--brand-danger); }}
+    .details {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 16px 0;
+      padding: 16px;
+      background: #FAFAFA;
+      border-radius: 10px;
+    }}
+    .detail-item {{ display: flex; flex-direction: column; gap: 2px; }}
+    .detail-label {{
+      font-size: 0.7rem;
+      color: var(--brand-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+    }}
+    .detail-value {{
+      font-size: 0.9rem;
+      font-weight: 500;
+    }}
+    .description {{
+      font-size: 0.92rem;
+      margin: 16px 0;
+      padding: 16px;
+      background: #FAFAFA;
+      border-radius: 10px;
+      line-height: 1.7;
+    }}
+    .whatsapp-cta {{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 16px 24px;
+      background: var(--whatsapp);
+      color: white;
+      text-decoration: none;
+      font-size: 1.1rem;
+      font-weight: 700;
+      border-radius: 12px;
+      margin: 20px 0 12px;
+      box-shadow: 0 4px 12px rgba(37, 211, 102, 0.3);
+      transition: background 0.2s, transform 0.1s;
+    }}
+    .whatsapp-cta:hover {{ background: var(--whatsapp-dark); }}
+    .whatsapp-cta:active {{ transform: scale(0.98); }}
+    .whatsapp-icon {{ width: 22px; height: 22px; fill: white; }}
+    .secondary-action {{
+      display: block;
+      text-align: center;
+      padding: 10px;
+      color: var(--brand-muted);
+      font-size: 0.85rem;
+      text-decoration: none;
+    }}
+    .secondary-action:hover {{ color: var(--brand-primary); }}
+    .redirect-hint {{
+      text-align: center;
+      padding: 16px;
+      font-size: 0.75rem;
+      color: var(--brand-muted);
+      border-top: 1px solid #f3f4f6;
+    }}
+    .redirect-hint a {{ color: var(--brand-primary); font-weight: 600; }}
+  </style>
 </head>
 <body>
-  <p>Redirecting to {brand}…</p>
-  <p>Product: {title}</p>
+  <div class="container">
+    <header class="brand-header">
+      <div class="brand-name">A Collection</div>
+      <div class="brand-tagline">Narowal</div>
+    </header>
+    <div class="loading-bar"></div>
+    <div class="gallery">
+      <div class="main-image-wrap">
+        <img id="main-image" class="main-image" src="{image_url}" alt="{title}" />
+      </div>
+      {thumbnails_html}
+    </div>
+    <div class="product-info">
+      <h1 class="product-title">{title}</h1>
+      <div class="product-subtitle">{subtitle}</div>
+      <div class="price-block">
+        <span class="price-sale">{sale_price_str}</span>
+        {retail_price_html}
+        {discount_badge_html}
+      </div>
+      {availability_html}
+      <div class="details">{details_html}</div>
+      <div class="description">{description}</div>
+      <a href="{wa_link}" class="whatsapp-cta" target="_blank" rel="noopener">
+        <svg class="whatsapp-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+        </svg>
+        Order on WhatsApp
+      </a>
+      <a href="../#/{slug}" class="secondary-action">View in full catalog</a>
+    </div>
+    <div class="redirect-hint">
+      Opening full catalog... <a href="../#/{slug}">Tap here if not redirected</a>
+    </div>
+  </div>
   <script>
-    // Redirect to the SPA with hash routing — opens this product in modal
-    window.location.replace('../#/{slug}');
+    function swapImage(thumb) {{
+      document.getElementById('main-image').src = thumb.src;
+      document.querySelectorAll('.thumb').forEach(function(t) {{ t.classList.remove('active'); }});
+      thumb.classList.add('active');
+    }}
+    setTimeout(function() {{
+      window.location.replace('../#/{slug}');
+    }}, 2000);
   </script>
   <noscript>
-    <a href="../#/{slug}">Click here to view {title}</a>
+    <div style="text-align:center;padding:20px;">
+      <a href="../#/{slug}">Open in catalog</a>
+    </div>
   </noscript>
 </body>
 </html>"##)
