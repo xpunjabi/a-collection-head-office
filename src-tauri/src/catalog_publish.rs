@@ -136,11 +136,35 @@ pub fn build_catalog_json(
             let images: Vec<String> = serde_json::from_str(&p.images)
                 .unwrap_or_default();
 
-            let availability = if p.profit_status.as_deref() == Some("sold_out") {
+            // v0.21.0: Availability logic — check actual stock, not just profit_status.
+            //
+            // Bug fix (Ali bhai's report): Sale recorded in HO app, published, but
+            // catalog SPA still showed "available". Root cause: old logic only checked
+            // profit_status == "sold_out". But:
+            //   - Partial sale (HO qty > 0) → profit_status = "in_head_office" → "available" (no visible change)
+            //   - HO = 0, agents > 0 → profit_status = "with_agent" → "available" (WRONG for customer)
+            //
+            // New logic checks qty_in_head_office directly:
+            //   - HO = 0 AND agents = 0 → "sold_out" (completely gone)
+            //   - HO = 0 AND agents > 0 → "sold_out" (HO can't fulfill directly, customer-facing = out of stock)
+            //   - HO > 0 AND HO <= 2 → "low_stock" (urgency indicator, visible change on partial sale)
+            //   - HO > 2 → "available"
+            //
+            // This way, every sale creates visible feedback on the catalog:
+            //   - Sell last item → "sold_out" badge
+            //   - Sell down to 1-2 → "low_stock" badge
+            //   - Sell but still have plenty → "available" (correct, no false urgency)
+            let ho_qty = p.qty_in_head_office.unwrap_or(0).max(0);
+            let agent_qty = p.qty_with_agents.unwrap_or(0).max(0);
+            let availability = if ho_qty == 0 {
                 "sold_out".to_string()
+            } else if ho_qty <= 2 {
+                "low_stock".to_string()
             } else {
                 "available".to_string()
             };
+            // Note: agent_qty kept for future use (e.g., "available via agent" messaging)
+            let _ = agent_qty;
 
             PublicProduct {
                 id: p.id.unwrap_or(0),
@@ -260,11 +284,13 @@ pub fn generate_product_page(
         _ => (String::new(), String::new()),
     };
 
-    // Availability badge
+    // Availability badge (v0.21.0: added low_stock)
     let availability_html = if product.availability.eq_ignore_ascii_case("available") {
         "<span class=\"availability in-stock\">In Stock</span>".to_string()
+    } else if product.availability.eq_ignore_ascii_case("low_stock") {
+        "<span class=\"availability low-stock\">Low Stock — Hurry!</span>".to_string()
     } else {
-        "<span class=\"availability out-of-stock\">Out of Stock</span>".to_string()
+        "<span class=\"availability out-of-stock\">Sold Out</span>".to_string()
     };
 
     // Details grid (only non-empty fields)
@@ -484,6 +510,7 @@ pub fn generate_product_page(
       margin-bottom: 8px;
     }}
     .availability.in-stock {{ color: #059669; }}
+    .availability.low-stock {{ color: #D97706; font-weight: 700; }}
     .availability.out-of-stock {{ color: var(--brand-danger); }}
     .details {{
       display: grid;
@@ -796,9 +823,11 @@ fn generate_meta_feed(catalog: &CatalogJson, base_url: &str) -> String {
                 (Some(main), rest)
             };
 
-        // Availability mapping
+        // Availability mapping (v0.21.0: handle low_stock too)
         let availability = if product.availability.eq_ignore_ascii_case("available") {
             "in stock"
+        } else if product.availability.eq_ignore_ascii_case("low_stock") {
+            "in stock"  // Google Merchant doesn't have "low stock" — still in stock
         } else {
             "out of stock"
         };
