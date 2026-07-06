@@ -18,6 +18,11 @@ export default function Settings() {
   const [backupPath, setBackupPath] = useState('')
   const [backupInterval, setBackupInterval] = useState('7')
   const [backupResult, setBackupResult] = useState('')
+  // v0.22.0: Restore backup + Import from Catalog state
+  const [isRestoring, setIsRestoring] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
+  const [restoreResult, setRestoreResult] = useState('')
+  const [importResult, setImportResult] = useState('')
   const [isBackingUp, setIsBackingUp] = useState(false)
   // v0.15.0: Public catalog config
   const [catalogRepo, setCatalogRepo] = useState('xpunjabi/a-collection-catalog')
@@ -103,6 +108,61 @@ export default function Settings() {
       setBackupResult(`Backup failed: ${err}`)
     } finally {
       setIsBackingUp(false)
+    }
+  }
+
+  // v0.22.0: Restore from latest valid backup (auto-picks newest non-empty file)
+  const handleRestoreBackup = async () => {
+    if (!confirm('This will overwrite your current database with the latest backup.\n\nA safety backup of your current DB will be created first.\n\nContinue?')) {
+      return
+    }
+    setIsRestoring(true)
+    setRestoreResult('')
+    try {
+      // List all backups, pick latest valid
+      const backups = await invoke<any[]>('list_backups')
+      if (!backups || backups.length === 0) {
+        setRestoreResult('No backups found in backup folder.')
+        return
+      }
+      const valid = backups.filter(b => b.is_valid)
+      if (valid.length === 0) {
+        setRestoreResult('No valid (non-empty) backups found.')
+        return
+      }
+      // Prefer ZIP (full backup) over DB-only
+      const zips = valid.filter(b => b.is_zip)
+      const target = zips.length > 0 ? zips[0] : valid[0]
+      const result = await invoke<string>('restore_backup', { filename: target.name })
+      setRestoreResult(`✓ ${result}\n\nRestored from: ${target.name}\n\nPlease RESTART the app for changes to take effect.`)
+    } catch (err) {
+      setRestoreResult(`Restore failed: ${err}`)
+    } finally {
+      setIsRestoring(false)
+    }
+  }
+
+  // v0.22.0: Import products from live catalog.json (recovery feature)
+  const handleImportFromCatalog = async () => {
+    if (!confirm('This will import products from the live catalog (frontend).\n\nProducts with existing SKUs will be skipped.\n\nPrivate data (cost_price, supplier, sales history) is NOT in catalog.json and cannot be recovered.\n\nContinue?')) {
+      return
+    }
+    setIsImporting(true)
+    setImportResult('')
+    try {
+      const result = await invoke<any>('import_from_catalog_json', { catalogUrl: null })
+      setImportResult(
+        `✓ Import complete!\n\n` +
+        `Catalog products: ${result.total_in_catalog}\n` +
+        `Imported: ${result.imported}\n` +
+        `Skipped (already exist): ${result.skipped}\n` +
+        `Failed: ${result.failed}` +
+        (result.errors && result.errors.length > 0 ? `\n\nErrors:\n${result.errors.join('\n')}` : '')
+      )
+    } catch (err) {
+      setImportResult(`Import failed: ${err}`)
+    } finally {
+      setIsImporting(false)
     }
   }
 
@@ -251,6 +311,39 @@ export default function Settings() {
               <span>Backup Now</span>
             </button>
           </div>
+
+          {/* v0.22.0: Restore + Import buttons */}
+          <div className="flex space-x-2">
+            <button
+              onClick={handleRestoreBackup}
+              disabled={isRestoring}
+              className="flex items-center space-x-1 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              <History size={16} className={isRestoring ? 'animate-spin' : ''} />
+              <span>{isRestoring ? 'Restoring...' : 'Restore Backup'}</span>
+            </button>
+            <button
+              onClick={handleImportFromCatalog}
+              disabled={isImporting}
+              className="flex items-center space-x-1 px-4 py-2 bg-amber-700 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              title="Recover product data from live catalog (use if local DB is lost)"
+            >
+              <Globe size={16} className={isImporting ? 'animate-spin' : ''} />
+              <span>{isImporting ? 'Importing...' : 'Import from Catalog'}</span>
+            </button>
+          </div>
+
+          {restoreResult && (
+            <div className="bg-emerald-950/40 border border-emerald-700/50 rounded-lg p-3 text-xs font-mono text-emerald-300 whitespace-pre-wrap">
+              {restoreResult}
+            </div>
+          )}
+
+          {importResult && (
+            <div className="bg-amber-950/40 border border-amber-700/50 rounded-lg p-3 text-xs font-mono text-amber-300 whitespace-pre-wrap">
+              {importResult}
+            </div>
+          )}
 
           {backupResult && (
             <div className="bg-slate-950 border border-gray-800 rounded-lg p-3 text-xs font-mono text-gray-400 whitespace-pre-wrap">

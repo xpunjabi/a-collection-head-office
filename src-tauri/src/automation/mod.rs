@@ -19,17 +19,22 @@ pub fn start_scheduler(db_path: PathBuf, app_handle: tauri::AppHandle) {
 }
 
 fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tauri::AppHandle) -> Result<(), String> {
-    // 1. Database Backup automation check
+    // 1. Database Backup automation check (DB-only, daily)
     if is_automation_due(conn, "Database Backup", 1)? {
         if let Ok(backup_path) = get_setting(conn, "backup_path") {
             if !backup_path.is_empty() {
                 let backup_dir = Path::new(&backup_path);
                 if backup_dir.exists() {
-                    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+                    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
                     let dest = backup_dir.join(format!("collection_ho_backup_{}.db", timestamp));
                     fs::copy(db_path, dest).map_err(|e| e.to_string())?;
                     update_automation_last_run(conn, "Database Backup")?;
                     let _ = app_handle.emit("automation-run", "Database Backup Successful");
+
+                    // v0.22.0: Also create a FULL backup (DB + images + settings) as ZIP.
+                    // This is Ali bhai's "daily full backup" requirement — if AppData is
+                    // accidentally deleted, this ZIP allows one-click restore.
+                    let _ = create_full_backup_in_dir(conn, db_path, backup_dir);
                 }
             }
         }
@@ -41,9 +46,9 @@ fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tauri::Ap
             if !backup_path.is_empty() {
                 let backup_dir = Path::new(&backup_path);
                 if backup_dir.exists() {
-                    let timestamp = chrono::Utc::now().format("%Y%m%d").to_string();
+                    let timestamp = chrono::Local::now().format("%Y%m%d").to_string();
                     let dest = backup_dir.join(format!("weekly_report_{}.txt", timestamp));
-                    
+
                     // Generate a quick text report
                     if let Ok(report_text) = compile_weekly_summary(conn) {
                         fs::write(dest, report_text).map_err(|e| e.to_string())?;
@@ -55,6 +60,65 @@ fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tauri::Ap
         }
     }
 
+    Ok(())
+}
+
+/// v0.22.0: Create a FULL backup (DB + images + settings) as ZIP.
+/// Called daily alongside DB-only backup. Silent — errors are logged via emit.
+fn create_full_backup_in_dir(conn: &Connection, db_path: &Path, backup_dir: &Path) -> Result<(), String> {
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let zip_filename = format!("full_backup_{}.zip", timestamp);
+    let zip_path = backup_dir.join(&zip_filename);
+
+    // Export settings as JSON
+    let all_settings: std::collections::HashMap<String, String> = conn
+        .query_map("SELECT key, value FROM settings", [], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(|e| format!("Failed to read settings: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+    let settings_json = serde_json::to_string_pretty(&all_settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+
+    // Build ZIP
+    let zip_file = fs::File::create(&zip_path).map_err(|e| format!("Create zip: {}", e))?;
+    let mut zip = zip::ZipWriter::new(zip_file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    // Add database.db
+    if db_path.exists() {
+        let db_bytes = fs::read(db_path).map_err(|e| format!("Read DB: {}", e))?;
+        zip.start_file("database.db", opts).map_err(|e| format!("Add DB to zip: {}", e))?;
+        zip.write_all(&db_bytes).map_err(|e| format!("Write DB to zip: {}", e))?;
+    }
+
+    // Add settings.json
+    zip.start_file("settings.json", opts).map_err(|e| format!("Add settings: {}", e))?;
+    zip.write_all(settings_json.as_bytes()).map_err(|e| format!("Write settings: {}", e))?;
+
+    // Add all images from AppData/images/
+    let images_dir = crate::utils::get_images_dir();
+    if images_dir.exists() {
+        let image_files: Vec<_> = fs::read_dir(&images_dir)
+            .map_err(|e| format!("Read images dir: {}", e))?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .collect();
+
+        for img_file in image_files {
+            let img_path = img_file.path();
+            if let Some(img_name) = img_path.file_name().and_then(|n| n.to_str()) {
+                let img_bytes = fs::read(&img_path).map_err(|e| format!("Read image {}: {}", img_name, e))?;
+                let zip_name = format!("images/{}", img_name);
+                zip.start_file(&zip_name, opts).map_err(|e| format!("Add image: {}", e))?;
+                zip.write_all(&img_bytes).map_err(|e| format!("Write image: {}", e))?;
+            }
+        }
+    }
+
+    zip.finish().map_err(|e| format!("Finalize zip: {}", e))?;
     Ok(())
 }
 

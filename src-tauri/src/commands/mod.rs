@@ -1007,10 +1007,438 @@ pub async fn backup_database_now(state: State<'_, DbState>) -> Result<String, St
     let backup_dir = Path::new(&backup_path);
     if !backup_dir.exists() { return Err("Backup path does not exist.".to_string()); }
     let db_src = utils::get_db_path();
-    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let dest = backup_dir.join(format!("manual_backup_{}.db", timestamp));
     std::fs::copy(db_src, &dest).map_err(|e| format!("Failed to copy: {}", e))?;
     Ok(dest.to_string_lossy().to_string())
+}
+
+/// v0.22.0: Create a FULL backup (DB + images + settings) as a ZIP archive.
+///
+/// Ali bhai's requirement after data loss: app should make daily full backup
+/// including everything (DB, images, settings/api keys) so that if files are
+/// accidentally deleted from one location, recovery is one-click.
+///
+/// Format: `full_backup_YYYYMMDD_HHMMSS.zip` containing:
+///   - database.db
+///   - images/ (all product images)
+///   - settings.json (all settings from DB)
+///
+/// Created in the configured backup_path.
+#[tauri::command]
+pub async fn create_full_backup(state: State<'_, DbState>) -> Result<String, String> {
+    let conn = state.0.lock().await;
+    let backup_path = get_setting_val(&conn, "backup_path").map_err(|e| e.to_string())?;
+    if backup_path.is_empty() {
+        return Err("Backup path is not configured. Please set it in Settings first.".to_string());
+    }
+    let backup_dir = Path::new(&backup_path);
+    if !backup_dir.exists() {
+        return Err("Backup path does not exist.".to_string());
+    }
+
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let zip_filename = format!("full_backup_{}.zip", timestamp);
+    let zip_path = backup_dir.join(&zip_filename);
+
+    // Export settings as JSON
+    let all_settings: std::collections::HashMap<String, String> = conn
+        .query_map("SELECT key, value FROM settings", [], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(|e| format!("Failed to read settings: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+    let settings_json = serde_json::to_string_pretty(&all_settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+
+    // Build ZIP
+    let zip_file = std::fs::File::create(&zip_path)
+        .map_err(|e| format!("Failed to create zip: {}", e))?;
+    let mut zip = zip::ZipWriter::new(zip_file);
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    // Add database.db
+    let db_path = utils::get_db_path();
+    if db_path.exists() {
+        let db_bytes = std::fs::read(&db_path)
+            .map_err(|e| format!("Failed to read DB: {}", e))?;
+        zip.start_file("database.db", opts)
+            .map_err(|e| format!("Failed to add DB to zip: {}", e))?;
+        zip.write_all(&db_bytes)
+            .map_err(|e| format!("Failed to write DB to zip: {}", e))?;
+    }
+
+    // Add settings.json
+    zip.start_file("settings.json", opts)
+        .map_err(|e| format!("Failed to add settings to zip: {}", e))?;
+    zip.write_all(settings_json.as_bytes())
+        .map_err(|e| format!("Failed to write settings: {}", e))?;
+
+    // Add all images
+    let images_dir = utils::get_images_dir();
+    if images_dir.exists() {
+        let image_files: Vec<_> = std::fs::read_dir(&images_dir)
+            .map_err(|e| format!("Failed to read images dir: {}", e))?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .collect();
+
+        for img_file in image_files {
+            let img_path = img_file.path();
+            if let Some(img_name) = img_path.file_name().and_then(|n| n.to_str()) {
+                let img_bytes = std::fs::read(&img_path)
+                    .map_err(|e| format!("Failed to read image {}: {}", img_name, e))?;
+                let zip_name = format!("images/{}", img_name);
+                zip.start_file(&zip_name, opts)
+                    .map_err(|e| format!("Failed to add image to zip: {}", e))?;
+                zip.write_all(&img_bytes)
+                    .map_err(|e| format!("Failed to write image to zip: {}", e))?;
+            }
+        }
+    }
+
+    zip.finish().map_err(|e| format!("Failed to finalize zip: {}", e))?;
+
+    Ok(zip_path.to_string_lossy().to_string())
+}
+
+/// v0.22.0: List available backup files (DB + ZIP) from backup_path.
+///
+/// Returns Vec of (filename, size_bytes, modified_date_iso) sorted newest first.
+/// Used by Settings UI to populate "Restore Backup" dropdown.
+#[tauri::command]
+pub async fn list_backups(state: State<'_, DbState>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = state.0.lock().await;
+    let backup_path = get_setting_val(&conn, "backup_path").map_err(|e| e.to_string())?;
+    if backup_path.is_empty() {
+        return Ok(Vec::new());  // No backup path configured
+    }
+    let backup_dir = Path::new(&backup_path);
+    if !backup_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut backups: Vec<serde_json::Value> = Vec::new();
+    let entries = std::fs::read_dir(backup_dir).map_err(|e| format!("Read dir: {}", e))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        // Only include .db and .zip files
+        if !name.ends_with(".db") && !name.ends_with(".zip") { continue; }
+        // Skip weekly_report text files
+        if name.contains("weekly_report") { continue; }
+
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let size = metadata.len();
+        let modified = metadata.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| {
+                chrono::DateTime::<chrono::Utc>::from_timestamp(d.as_secs() as i64, 0)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+
+        // Skip empty/corrupt DB files (size < 10 KB = likely empty)
+        let is_valid = if name.ends_with(".db") { size > 10240 } else { true };
+
+        backups.push(serde_json::json!({
+            "name": name,
+            "size": size,
+            "modified": modified,
+            "is_zip": name.ends_with(".zip"),
+            "is_valid": is_valid,
+        }));
+    }
+
+    // Sort by modified date descending (newest first)
+    backups.sort_by(|a, b| {
+        b["modified"].as_str().unwrap_or("").cmp(a["modified"].as_str().unwrap_or(""))
+    });
+
+    Ok(backups)
+}
+
+/// v0.22.0: Restore a backup file (DB-only or full ZIP).
+///
+/// Ali bhai's requirement: "Restore Backup" button in Settings that auto-picks
+/// latest valid backup and restores it.
+///
+/// Behavior:
+/// - If filename ends with .db: copy to AppData/database.db (overwrite existing)
+/// - If filename ends with .zip: extract database.db + images/ + settings.json
+///   from ZIP into AppData
+/// - Before overwrite: create a safety backup of current DB (if exists)
+///   named `pre_restore_YYYYMMDD_HHMMSS.db`
+/// - Returns success message with what was restored
+#[tauri::command]
+pub async fn restore_backup(
+    state: State<'_, DbState>,
+    filename: String,
+) -> Result<String, String> {
+    let conn = state.0.lock().await;
+    let backup_path = get_setting_val(&conn, "backup_path").map_err(|e| e.to_string())?;
+    if backup_path.is_empty() {
+        return Err("Backup path is not configured.".to_string());
+    }
+    drop(conn);  // Release DB lock before file operations
+
+    let backup_dir = Path::new(&backup_path);
+    let source_path = backup_dir.join(&filename);
+    if !source_path.exists() {
+        return Err(format!("Backup file not found: {}", filename));
+    }
+
+    let db_path = utils::get_db_path();
+    let images_dir = utils::get_images_dir();
+    let app_dir = utils::get_app_dir();
+
+    // Safety: backup current DB before overwrite (if it exists)
+    let safety_timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    if db_path.exists() {
+        let safety_path = backup_dir.join(format!("pre_restore_{}.db", safety_timestamp));
+        let _ = std::fs::copy(&db_path, &safety_path);
+    }
+
+    if filename.ends_with(".zip") {
+        // Full ZIP restore: extract DB + images + settings
+        let zip_file = std::fs::File::open(&source_path)
+            .map_err(|e| format!("Failed to open zip: {}", e))?;
+        let mut archive = zip::ZipArchive::new(zip_file)
+            .map_err(|e| format!("Failed to read zip: {}", e))?;
+
+        std::fs::create_dir_all(&app_dir)
+            .map_err(|e| format!("Failed to create app dir: {}", e))?;
+        std::fs::create_dir_all(&images_dir)
+            .map_err(|e| format!("Failed to create images dir: {}", e))?;
+
+        let mut db_restored = false;
+        let mut images_restored = 0;
+        let mut settings_restored = false;
+
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)
+                .map_err(|e| format!("Failed to read zip entry {}: {}", i, e))?;
+            let name = file.name().to_string();
+
+            if name == "database.db" {
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut file, &mut bytes)
+                    .map_err(|e| format!("Read DB from zip: {}", e))?;
+                std::fs::write(&db_path, &bytes)
+                    .map_err(|e| format!("Write DB: {}", e))?;
+                db_restored = true;
+            } else if name.starts_with("images/") {
+                let img_name = name.trim_start_matches("images/");
+                if !img_name.is_empty() && !img_name.contains('/') {
+                    let dest = images_dir.join(img_name);
+                    let mut bytes = Vec::new();
+                    std::io::Read::read_to_end(&mut file, &mut bytes)
+                        .map_err(|e| format!("Read image: {}", e))?;
+                    std::fs::write(&dest, &bytes)
+                        .map_err(|e| format!("Write image: {}", e))?;
+                    images_restored += 1;
+                }
+            } else if name == "settings.json" {
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut file, &mut bytes)
+                    .map_err(|e| format!("Read settings: {}", e))?;
+                let settings_str = String::from_utf8_lossy(&bytes).to_string();
+                let settings: std::collections::HashMap<String, String> =
+                    serde_json::from_str(&settings_str)
+                        .map_err(|e| format!("Parse settings JSON: {}", e))?;
+
+                let conn = state.0.lock().await;
+                for (key, value) in &settings {
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                        rusqlite::params![key, value],
+                    );
+                }
+                settings_restored = true;
+            }
+        }
+
+        if !db_restored {
+            return Err("ZIP did not contain database.db".to_string());
+        }
+
+        Ok(format!(
+            "Full backup restored successfully!\n\nDatabase: ✓\nImages: {} restored\nSettings: {}",
+            images_restored,
+            if settings_restored { "✓" } else { "✗" }
+        ))
+    } else if filename.ends_with(".db") {
+        // DB-only restore
+        std::fs::copy(&source_path, &db_path)
+            .map_err(|e| format!("Failed to copy DB: {}", e))?;
+        Ok("Database restored successfully! Restart the app for changes to take effect.".to_string())
+    } else {
+        Err("Unsupported backup file type. Only .db and .zip supported.".to_string())
+    }
+}
+
+/// v0.22.0: Import products from a catalog.json file (URL or local path).
+///
+/// Ali bhai's requirement after data loss: recover product data from published
+/// catalog.json (frontend) if local DB is lost/corrupt.
+///
+/// Behavior:
+/// - Fetches catalog.json from given URL (default: live catalog)
+/// - Parses products array
+/// - For each product: INSERT into products table (OR IGNORE to skip existing SKUs)
+/// - Returns summary (total imported, skipped, failed)
+///
+/// This is a RECOVERY feature. It will restore: name, SKU, price, retail_price,
+/// category, color, fabric, season, description, images.
+/// It will NOT restore: cost_price, supplier, sales history, customers, agents,
+/// ledger entries — those are private and not in catalog.json.
+#[tauri::command]
+pub async fn import_from_catalog_json(
+    state: State<'_, DbState>,
+    catalog_url: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    struct CatalogProduct {
+        id: i64,
+        name: String,
+        sku: Option<String>,
+        sale_price: f64,
+        retail_price: Option<f64>,
+        category: Option<String>,
+        color: Option<String>,
+        fabric: Option<String>,
+        season: Option<String>,
+        description: Option<String>,
+        images: Vec<String>,
+        availability: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct CatalogJsonImport {
+        brand: Option<String>,
+        whatsapp_number: Option<String>,
+        products: Vec<CatalogProduct>,
+    }
+
+    // Default URL: live catalog
+    let url = catalog_url.unwrap_or_else(|| {
+        "https://xpunjabi.github.io/a-collection-catalog/data/catalog.json".to_string()
+    });
+
+    // Fetch JSON
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent("a-collection-head-office/0.22.0")
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {}", e))?;
+
+    let response = client.get(&url).send().await
+        .map_err(|e| format!("Failed to fetch catalog.json: {}", e))?;
+    let body = response.text().await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+    let catalog: CatalogJsonImport = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse catalog.json: {}", e))?;
+
+    let mut conn = state.0.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let mut imported = 0;
+    let mut skipped = 0;
+    let mut failed = 0;
+    let mut errors: Vec<String> = Vec::new();
+
+    for product in &catalog.products {
+        let sku = product.sku.as_deref().unwrap_or("");
+
+        // Check if SKU already exists (skip duplicates)
+        if !sku.is_empty() {
+            let existing: Option<i64> = conn.query_row(
+                "SELECT id FROM products WHERE sku = ?1",
+                rusqlite::params![sku],
+                |r| r.get(0),
+            ).ok();
+            if existing.is_some() {
+                skipped += 1;
+                continue;
+            }
+        }
+
+        // Map availability to profit_status
+        let profit_status = if product.availability == "sold_out" {
+            Some("sold_out".to_string())
+        } else if product.availability == "low_stock" {
+            Some("in_head_office".to_string())
+        } else {
+            None
+        };
+
+        // Default qty for imported products (user can edit later)
+        let qty_in_ho: i64 = if product.availability == "sold_out" { 0 } else { 3 };
+
+        let images_json = serde_json::to_string(&product.images)
+            .unwrap_or_else(|_| "[]".to_string());
+
+        match conn.execute(
+            "INSERT INTO products (sku, name, category, color, season, description, images,
+                cost_price, sale_price, purchase_price, stock_quantity, status,
+                qty_in_head_office, qty_with_agents, qty_sold, qty_reserved, profit_status,
+                retail_price, brand, fabric, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?21)",
+            rusqlite::params![
+                sku,
+                &product.name,
+                product.category.as_deref().unwrap_or(""),
+                product.color.as_deref().unwrap_or(""),
+                "",  // design (not in catalog.json)
+                product.season.as_deref().unwrap_or(""),
+                product.description.as_deref().unwrap_or(&product.name),
+                &images_json,
+                0.0,  // cost_price (private, not in catalog)
+                product.sale_price,
+                product.sale_price,  // purchase_price fallback
+                qty_in_ho,  // stock_quantity
+                "active",  // status
+                qty_in_ho,  // qty_in_head_office
+                0,  // qty_with_agents
+                0,  // qty_sold
+                0,  // qty_reserved
+                profit_status,
+                product.retail_price,
+                catalog.brand.as_deref().unwrap_or(""),
+                product.fabric.as_deref().unwrap_or(""),
+                &now,
+            ],
+        ) {
+            Ok(_) => imported += 1,
+            Err(e) => {
+                failed += 1;
+                errors.push(format!("{}: {}", product.name, e));
+                if errors.len() > 5 { break; }  // Limit error list
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "total_in_catalog": catalog.products.len(),
+        "imported": imported,
+        "skipped": skipped,
+        "failed": failed,
+        "errors": errors,
+        "brand": catalog.brand.unwrap_or_default(),
+        "whatsapp_number": catalog.whatsapp_number.unwrap_or_default(),
+    }))
 }
 
 /// Re-run database migrations on demand. This is primarily used by the
