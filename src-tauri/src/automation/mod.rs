@@ -66,6 +66,7 @@ fn run_due_automations(conn: &Connection, db_path: &Path, app_handle: &tauri::Ap
 /// v0.22.0: Create a FULL backup (DB + images + settings) as ZIP.
 /// Called daily alongside DB-only backup. Silent — errors are logged via emit.
 fn create_full_backup_in_dir(conn: &Connection, db_path: &Path, backup_dir: &Path) -> Result<(), String> {
+    use std::io::Write;
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let zip_filename = format!("full_backup_{}.zip", timestamp);
     let zip_path = backup_dir.join(&zip_filename);

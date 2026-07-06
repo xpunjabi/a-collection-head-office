@@ -1027,6 +1027,7 @@ pub async fn backup_database_now(state: State<'_, DbState>) -> Result<String, St
 /// Created in the configured backup_path.
 #[tauri::command]
 pub async fn create_full_backup(state: State<'_, DbState>) -> Result<String, String> {
+    use std::io::Write;
     let conn = state.0.lock().await;
     let backup_path = get_setting_val(&conn, "backup_path").map_err(|e| e.to_string())?;
     if backup_path.is_empty() {
@@ -1041,8 +1042,8 @@ pub async fn create_full_backup(state: State<'_, DbState>) -> Result<String, Str
     let zip_filename = format!("full_backup_{}.zip", timestamp);
     let zip_path = backup_dir.join(&zip_filename);
 
-    // Export settings as JSON
-    let all_settings: std::collections::HashMap<String, String> = conn
+    // Export settings as JSON (deref MutexGuard to access Connection methods)
+    let all_settings: std::collections::HashMap<String, String> = (&*conn)
         .query_map("SELECT key, value FROM settings", [], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })
@@ -1185,6 +1186,7 @@ pub async fn restore_backup(
     state: State<'_, DbState>,
     filename: String,
 ) -> Result<String, String> {
+    use std::io::Write;
     let conn = state.0.lock().await;
     let backup_path = get_setting_val(&conn, "backup_path").map_err(|e| e.to_string())?;
     if backup_path.is_empty() {
