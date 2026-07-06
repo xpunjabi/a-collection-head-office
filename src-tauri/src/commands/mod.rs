@@ -1043,8 +1043,11 @@ pub async fn create_full_backup(state: State<'_, DbState>) -> Result<String, Str
     let zip_path = backup_dir.join(&zip_filename);
 
     // Export settings as JSON (deref MutexGuard to access Connection methods)
-    let all_settings: std::collections::HashMap<String, String> = (&*conn)
-        .query_map("SELECT key, value FROM settings", [], |r| {
+    let mut stmt = (&*conn)
+        .prepare("SELECT key, value FROM settings")
+        .map_err(|e| format!("Failed to prepare settings query: {}", e))?;
+    let all_settings: std::collections::HashMap<String, String> = stmt
+        .query_map([], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })
         .map_err(|e| format!("Failed to read settings: {}", e))?
@@ -1213,6 +1216,7 @@ pub async fn restore_backup(
 
     if filename.ends_with(".zip") {
         // Full ZIP restore: extract DB + images + settings
+        // Phase 1: Read all entries from ZIP (synchronous I/O)
         let zip_file = std::fs::File::open(&source_path)
             .map_err(|e| format!("Failed to open zip: {}", e))?;
         let mut archive = zip::ZipArchive::new(zip_file)
@@ -1225,7 +1229,7 @@ pub async fn restore_backup(
 
         let mut db_restored = false;
         let mut images_restored = 0;
-        let mut settings_restored = false;
+        let mut settings_data: Option<std::collections::HashMap<String, String>> = None;
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)
@@ -1258,20 +1262,25 @@ pub async fn restore_backup(
                 let settings: std::collections::HashMap<String, String> =
                     serde_json::from_str(&settings_str)
                         .map_err(|e| format!("Parse settings JSON: {}", e))?;
-
-                let conn = state.0.lock().await;
-                for (key, value) in &settings {
-                    let _ = conn.execute(
-                        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
-                        rusqlite::params![key, value],
-                    );
-                }
-                settings_restored = true;
+                settings_data = Some(settings);
             }
         }
 
         if !db_restored {
             return Err("ZIP did not contain database.db".to_string());
+        }
+
+        // Phase 2: Apply settings to DB (separate from ZIP I/O to keep future Send)
+        let mut settings_restored = false;
+        if let Some(settings) = settings_data {
+            let conn = state.0.lock().await;
+            for (key, value) in &settings {
+                let _ = (&*conn).execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                    rusqlite::params![key, value],
+                );
+            }
+            settings_restored = true;
         }
 
         Ok(format!(
@@ -1353,7 +1362,7 @@ pub async fn import_from_catalog_json(
     let catalog: CatalogJsonImport = serde_json::from_str(&body)
         .map_err(|e| format!("Failed to parse catalog.json: {}", e))?;
 
-    let mut conn = state.0.lock().await;
+    let conn = state.0.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
 
     let mut imported = 0;
@@ -1366,7 +1375,7 @@ pub async fn import_from_catalog_json(
 
         // Check if SKU already exists (skip duplicates)
         if !sku.is_empty() {
-            let existing: Option<i64> = conn.query_row(
+            let existing: Option<i64> = (&*conn).query_row(
                 "SELECT id FROM products WHERE sku = ?1",
                 rusqlite::params![sku],
                 |r| r.get(0),
@@ -1392,7 +1401,7 @@ pub async fn import_from_catalog_json(
         let images_json = serde_json::to_string(&product.images)
             .unwrap_or_else(|_| "[]".to_string());
 
-        match conn.execute(
+        match (&*conn).execute(
             "INSERT INTO products (sku, name, category, color, season, description, images,
                 cost_price, sale_price, purchase_price, stock_quantity, status,
                 qty_in_head_office, qty_with_agents, qty_sold, qty_reserved, profit_status,

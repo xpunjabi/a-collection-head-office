@@ -72,8 +72,11 @@ fn create_full_backup_in_dir(conn: &Connection, db_path: &Path, backup_dir: &Pat
     let zip_path = backup_dir.join(&zip_filename);
 
     // Export settings as JSON
-    let all_settings: std::collections::HashMap<String, String> = conn
-        .query_map("SELECT key, value FROM settings", [], |r| {
+    let mut stmt = conn
+        .prepare("SELECT key, value FROM settings")
+        .map_err(|e| format!("Failed to prepare settings query: {}", e))?;
+    let all_settings: std::collections::HashMap<String, String> = stmt
+        .query_map([], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })
         .map_err(|e| format!("Failed to read settings: {}", e))?
