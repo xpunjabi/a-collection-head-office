@@ -1401,17 +1401,23 @@ pub async fn import_from_catalog_json(
         let images_json = serde_json::to_string(&product.images)
             .unwrap_or_else(|_| "[]".to_string());
 
-        // 22 columns, 22 placeholders, 22 params — all in same order.
+        // 22 columns, 22 placeholders (?1..?22), 22 params — all in same order.
         // No `design` column here because catalog.json does not carry it
         // (catalog.json: brand/whatsapp_number at top, products carry
         //  sku/name/sale_price/retail_price/category/color/fabric/season/
         //  description/images/availability only).
+        //
+        // created_at and updated_at intentionally share the same `&now`
+        // value (both point to the import timestamp). They use TWO distinct
+        // placeholder slots (?21 and ?22) — not a duplicated placeholder.
+        // rusqlite counts placeholder occurrences, so a duplicated `?22` would
+        // read as 23 values for 22 columns (the v0.22.3 bug).
         match (&*conn).execute(
             "INSERT INTO products (sku, name, category, color, season, description, images,
                 cost_price, sale_price, purchase_price, stock_quantity, status,
                 qty_in_head_office, qty_with_agents, qty_sold, qty_reserved, profit_status,
                 retail_price, brand, fabric, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?22)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             rusqlite::params![
                 sku,                                  // ?1
                 &product.name,                        // ?2
@@ -1434,7 +1440,7 @@ pub async fn import_from_catalog_json(
                 catalog.brand.as_deref().unwrap_or(""),     // ?19 brand
                 product.fabric.as_deref().unwrap_or(""),    // ?20 fabric
                 &now,                                 // ?21 created_at
-                &now,                                 // ?22 updated_at (same value)
+                &now,                                 // ?22 updated_at (same value, distinct slot)
             ],
         ) {
             Ok(_) => imported += 1,
