@@ -5,11 +5,9 @@ import FormattedMessage from './FormattedMessage'
 import { invoke } from '@tauri-apps/api/core'
 import {
   Send, X, Plus, Image, Link2, FileText, Upload,
-  Trash2, GripVertical, Sparkles, Check, Ban, Copy, Sparkle, Edit3,
-  Bot
+  Trash2, GripVertical, Sparkles, Check, Ban, Copy, Sparkle, Edit3
 } from 'lucide-react'
 import { shareToPlatform } from '../utils/share'
-import { executeAgentTask, disposeAgent } from '../utils/pageAgentAdapter'
 
 /**
  * Renders a remote web image with graceful fallback to a base64-uploaded image
@@ -78,9 +76,6 @@ export default function AiWorkspace() {
   const [generatingIndex, setGeneratingIndex] = useState<number | null>(null)
   const [editingDraftIndex, setEditingDraftIndex] = useState<number | null>(null)
   const [draftEdits, setDraftEdits] = useState<Record<number, { title: string; brand: string; fabric: string; design_code: string; notes: string; cost_price: string; retail_price: string; sale_price: string }>>({})
-  // v0.23.0 Phase 1: Page-Agent integration state
-  const [agentMode, setAgentMode] = useState(false)
-  const [agentStatus, setAgentStatus] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -180,61 +175,10 @@ export default function AiWorkspace() {
     }
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     const text = inputText.trim()
     if (!text && !pendingImage) return
-
-    // v0.23.0 Phase 1: If Agent Mode is ON, route through Page-Agent.
-    // Page-Agent reads the DOM, decides actions, and uses our existing
-    // call_ai_provider pipeline via the Tauri bridge. If Agent Mode is
-    // OFF (default), use the existing ask_ai flow — no behavior change.
-    //
-    // v0.23.2 FIX: Previous version mutated aiMessages array directly
-    // via `.push()` without going through Zustand's `set()`. This caused
-    // (a) React not to re-render properly, and (b) when other state
-    // changes triggered a re-render, the malformed message object
-    // (using `content` instead of `text` field) crashed FormattedMessage
-    // → entire app black screen. Fixed by using proper `setState()` and
-    // matching the existing message schema `{ role, text }`.
-    if (agentMode) {
-      if (pendingImage) {
-        setToast('Agent Mode does not support image input in Phase 1. Toggle off Agent Mode to send images.')
-        return
-      }
-      const prompt = text
-      setInputText('')
-      // Push user message through proper Zustand setState so React
-      // re-renders cleanly. Schema must match existing aiMessages type:
-      // { role, text, ...optional fields }. `role` must be the literal
-      // union type — TS strict mode widens string literals to `string`.
-      useAppStore.setState((state) => ({
-        aiMessages: [...state.aiMessages, { role: 'user' as const, text: prompt }],
-      }))
-      setAgentStatus('Agent thinking…')
-      try {
-        const result = await executeAgentTask(prompt)
-        setAgentStatus(null)
-        // Push the agent's final response. ExecutionResult.data holds the
-        // agent's final text response (from the 'done' tool's `text` arg).
-        // Same setState pattern — never mutate array directly.
-        useAppStore.setState((state) => ({
-          aiMessages: [...state.aiMessages, {
-            role: 'assistant' as const,
-            text: result.data || '(agent completed task with no message)',
-          }].slice(-50),  // Match existing sendAiMessage's 50-msg cap
-        }))
-      } catch (err) {
-        setAgentStatus(null)
-        useAppStore.setState((state) => ({
-          aiMessages: [...state.aiMessages, {
-            role: 'assistant' as const,
-            text: `Agent error: ${err}`,
-          }],
-        }))
-      }
-      return
-    }
 
     const prompt = text || 'Process this image for cataloging'
     sendAiMessage(prompt, pendingImage || undefined)
@@ -781,37 +725,6 @@ export default function AiWorkspace() {
 
       {/* Input */}
       <form onSubmit={handleSubmit} className="p-2 border-t border-gray-800/60 shrink-0 space-y-2">
-        {/* v0.23.0 Phase 1: Agent Mode toggle + status */}
-        <div className="flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              const next = !agentMode
-              setAgentMode(next)
-              if (!next) {
-                // Toggling OFF — release DOM listeners
-                disposeAgent()
-                setAgentStatus(null)
-              }
-            }}
-            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors ${
-              agentMode
-                ? 'bg-violet-600 text-white border border-violet-400'
-                : 'bg-slate-800 text-gray-400 border border-slate-700 hover:bg-slate-700'
-            }`}
-            title="Agent Mode: AI can read the current page and operate the UI (Phase 1 — read-only experiments)"
-          >
-            <Bot size={12} />
-            <span>{agentMode ? 'Agent Mode ON' : 'Agent Mode'}</span>
-          </button>
-          {agentStatus && (
-            <span className="flex items-center space-x-1 text-[10px] text-violet-400 animate-pulse">
-              <Sparkles size={10} />
-              <span>{agentStatus}</span>
-            </span>
-          )}
-        </div>
-
         {/* Drafts summary */}
         {activeDrafts.length > 0 && (
           <div className="flex items-center space-x-1 text-[10px] text-violet-400">

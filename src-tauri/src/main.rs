@@ -123,9 +123,6 @@ fn main() {
             commands::preview_catalog_publish,
             commands::publish_catalog_to_github,
             commands::get_catalog_publish_history,
-            // v0.23.0 — Page-Agent Integration (Phase 1: Foundation)
-            commands::page_agent_invoke,
-            commands::page_agent_get_context,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

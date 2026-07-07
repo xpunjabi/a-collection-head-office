@@ -1,7 +1,7 @@
 {
   "name": "a-collection-head-office",
   "private": true,
-  "version": "0.23.2",
+  "version": "0.24.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,6 @@
     "@tauri-apps/plugin-fs": "2.0.1",
     "@tauri-apps/plugin-shell": "2.0.1",
     "lucide-react": "^0.454.0",
-    "page-agent": "^1.11.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.1"
