@@ -1089,12 +1089,12 @@ pub async fn page_agent_invoke(
     //    serialise the whole conversation as one prompt.
     let mut conversation = String::new();
     for msg in &messages {
-        let role_label = match msg.role.as_str() {
+        let role_label: &str = match msg.role.as_str() {
             "system" => "SYSTEM",
             "user" => "USER",
             "assistant" => "ASSISTANT",
             "tool" => "TOOL_RESULT",
-            other => other.to_uppercase(),
+            _ => "OTHER",
         };
         if let Some(c) = &msg.content {
             if !c.is_empty() {
