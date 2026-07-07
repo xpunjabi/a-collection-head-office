@@ -5,9 +5,11 @@ import FormattedMessage from './FormattedMessage'
 import { invoke } from '@tauri-apps/api/core'
 import {
   Send, X, Plus, Image, Link2, FileText, Upload,
-  Trash2, GripVertical, Sparkles, Check, Ban, Copy, Sparkle, Edit3
+  Trash2, GripVertical, Sparkles, Check, Ban, Copy, Sparkle, Edit3,
+  Bot
 } from 'lucide-react'
 import { shareToPlatform } from '../utils/share'
+import { executeAgentTask, disposeAgent } from '../utils/pageAgentAdapter'
 
 /**
  * Renders a remote web image with graceful fallback to a base64-uploaded image
@@ -76,6 +78,9 @@ export default function AiWorkspace() {
   const [generatingIndex, setGeneratingIndex] = useState<number | null>(null)
   const [editingDraftIndex, setEditingDraftIndex] = useState<number | null>(null)
   const [draftEdits, setDraftEdits] = useState<Record<number, { title: string; brand: string; fabric: string; design_code: string; notes: string; cost_price: string; retail_price: string; sale_price: string }>>({})
+  // v0.23.0 Phase 1: Page-Agent integration state
+  const [agentMode, setAgentMode] = useState(false)
+  const [agentStatus, setAgentStatus] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -175,10 +180,45 @@ export default function AiWorkspace() {
     }
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const text = inputText.trim()
     if (!text && !pendingImage) return
+
+    // v0.23.0 Phase 1: If Agent Mode is ON, route through Page-Agent.
+    // Page-Agent reads the DOM, decides actions, and uses our existing
+    // call_ai_provider pipeline via the Tauri bridge. If Agent Mode is
+    // OFF (default), use the existing ask_ai flow — no behavior change.
+    if (agentMode) {
+      if (pendingImage) {
+        setToast('Agent Mode does not support image input in Phase 1. Toggle off Agent Mode to send images.')
+        return
+      }
+      const prompt = text
+      setInputText('')
+      // Optimistically show the user's message in the chat
+      useAppStore.getState().aiMessages.push({
+        role: 'user', content: prompt, ts: Date.now()
+      } as any)
+      setAgentStatus('Agent thinking…')
+      try {
+        const result = await executeAgentTask(prompt)
+        setAgentStatus(null)
+        // Push the agent's final response into the existing chat stream.
+        // ExecutionResult.data holds the agent's final text response
+        // (from the 'done' tool's `text` arg).
+        useAppStore.getState().aiMessages.push({
+          role: 'assistant',
+          content: result.data || '(agent completed task with no message)',
+          ts: Date.now(),
+          viaAgent: true,
+        } as any)
+      } catch (err) {
+        setAgentStatus(null)
+        setToast(`Agent error: ${err}`)
+      }
+      return
+    }
 
     const prompt = text || 'Process this image for cataloging'
     sendAiMessage(prompt, pendingImage || undefined)
@@ -725,6 +765,37 @@ export default function AiWorkspace() {
 
       {/* Input */}
       <form onSubmit={handleSubmit} className="p-2 border-t border-gray-800/60 shrink-0 space-y-2">
+        {/* v0.23.0 Phase 1: Agent Mode toggle + status */}
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !agentMode
+              setAgentMode(next)
+              if (!next) {
+                // Toggling OFF — release DOM listeners
+                disposeAgent()
+                setAgentStatus(null)
+              }
+            }}
+            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+              agentMode
+                ? 'bg-violet-600 text-white border border-violet-400'
+                : 'bg-slate-800 text-gray-400 border border-slate-700 hover:bg-slate-700'
+            }`}
+            title="Agent Mode: AI can read the current page and operate the UI (Phase 1 — read-only experiments)"
+          >
+            <Bot size={12} />
+            <span>{agentMode ? 'Agent Mode ON' : 'Agent Mode'}</span>
+          </button>
+          {agentStatus && (
+            <span className="flex items-center space-x-1 text-[10px] text-violet-400 animate-pulse">
+              <Sparkles size={10} />
+              <span>{agentStatus}</span>
+            </span>
+          )}
+        </div>
+
         {/* Drafts summary */}
         {activeDrafts.length > 0 && (
           <div className="flex items-center space-x-1 text-[10px] text-violet-400">
