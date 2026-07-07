@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   Search, Download, Upload, Plus, Edit, Trash2, Image as ImageIcon,
   X, Palette, MapPin, Share2, ChevronDown, CheckSquare, Square,
-  MessageCircle, Facebook, Instagram, Twitter, ShoppingCart, Globe
+  MessageCircle, Facebook, Instagram, Twitter, ShoppingCart, Globe, Link2
 } from 'lucide-react'
 import ProductImage from '../components/ProductImage'
 import {
@@ -445,6 +445,28 @@ export default function Catalog() {
     } catch (err) { console.error(err) }
   }
 
+  // v0.24.1: Add image from URL (FB/IG/TikTok product page, brand site, etc.)
+  // Rust downloads the image with browser-like headers to bypass hotlink
+  // protection, then runs it through the same resize/compress pipeline as
+  // uploaded images.
+  const handleAddImageFromUrl = async () => {
+    const url = prompt('Paste image URL (https://...):')
+    if (!url || !url.trim()) return
+    if (!/^https?:\/\//i.test(url.trim())) {
+      alert('Please paste a valid URL starting with http:// or https://')
+      return
+    }
+    try {
+      const savedName = await invoke<string>('save_image_from_url', {
+        url: url.trim(),
+        formatType: 'thumbnail',
+      })
+      setImages(prev => [...prev, savedName])
+    } catch (err) {
+      alert(`Failed to download image: ${err}`)
+    }
+  }
+
   // v0.14.0: Paste image from clipboard (Ctrl+V) in Catalog form
   const handlePasteImage = useCallback(async (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
@@ -502,6 +524,35 @@ export default function Catalog() {
   }, [])
 
   const handleRemoveImage = (index: number) => setImages(images.filter((_, i) => i !== index))
+
+  // v0.24.1: Document-level paste listener — fires whenever the Add/Edit
+  // Product modal is open. The previous per-div onPaste handler only fired
+  // when the div itself had focus, which never happens in Tauri webview
+  // (divs aren't focusable without tabIndex). This document-level approach
+  // catches Ctrl+V anywhere in the window while the modal is open, then
+  // reuses the same handlePasteImage logic.
+  useEffect(() => {
+    if (!showModal) return
+    const onDocPaste = (e: ClipboardEvent) => {
+      if (!e.clipboardData?.items) return
+      // Skip if user is typing in an input/textarea — let it paste text
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        return
+      }
+      const hasImage = Array.from(e.clipboardData.items).some(it => it.type.startsWith('image/'))
+      if (!hasImage) return
+      // Wrap into a React-like event shape and delegate to existing handler.
+      e.preventDefault()
+      const synthetic = {
+        clipboardData: e.clipboardData,
+        preventDefault: () => e.preventDefault(),
+      } as unknown as React.ClipboardEvent
+      handlePasteImage(synthetic)
+    }
+    document.addEventListener('paste', onDocPaste)
+    return () => document.removeEventListener('paste', onDocPaste)
+  }, [showModal, handlePasteImage])
 
   const handleCsvExport = async () => {
     try {
@@ -938,14 +989,15 @@ export default function Catalog() {
                   className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
               </div>
 
-              {/* Images — v0.14.0: clipboard paste + drag-drop + file picker */}
+              {/* Images — v0.14.0: clipboard paste + drag-drop + file picker
+                   v0.24.1: + URL paste button + document-level paste listener */}
               <div
                 onPaste={handlePasteImage}
                 onDrop={handleImageDrop}
                 onDragOver={(e) => e.preventDefault()}
               >
                 <label className="block text-xs font-semibold uppercase text-gray-400 mb-2">
-                  Images (Ctrl+V to paste, drag-drop, or click +)
+                  Images
                 </label>
                 <div className="flex flex-wrap gap-2">
                   {images.map((imgName, idx) => (
@@ -959,8 +1011,12 @@ export default function Catalog() {
                     className="w-24 h-24 bg-slate-950 hover:bg-slate-900 border border-dashed border-gray-800 hover:border-violet-500 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:text-violet-400 transition-colors">
                     <Plus size={20} /><span className="text-[10px]">Photo</span>
                   </button>
+                  <button type="button" onClick={handleAddImageFromUrl}
+                    className="w-24 h-24 bg-slate-950 hover:bg-slate-900 border border-dashed border-gray-800 hover:border-violet-500 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:text-violet-400 transition-colors">
+                    <Link2 size={18} /><span className="text-[10px]">From URL</span>
+                  </button>
                 </div>
-                <p className="text-[10px] text-gray-600 mt-1">Tip: Screenshot lo (Print Screen), phir yahan Ctrl+V paste karo</p>
+                <p className="text-[10px] text-gray-600 mt-1">3 ways to add: Ctrl+V paste image, drag-drop, click + or From URL</p>
               </div>
 
               <div className="flex justify-end space-x-2 pt-3 border-t border-gray-800">

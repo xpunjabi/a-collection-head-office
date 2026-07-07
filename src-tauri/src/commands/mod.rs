@@ -156,6 +156,46 @@ pub async fn save_base64_image(base64_data: String, format_type: String) -> Resu
         .map_err(|e| e.to_string())
 }
 
+/// v0.24.1: Download an image from a URL and save it as a product image.
+/// Used by the Catalog form's "Add from URL" button. Many e-commerce sites
+/// hotlink-protect their images and return 403 for non-browser Referer
+/// headers, so we set a browser-like User-Agent and Referer.
+///
+/// Reuses the existing `process_and_save_image_bytes` pipeline (resize,
+/// convert, save as JPEG) — no new image processing code.
+#[tauri::command]
+pub async fn save_image_from_url(url: String, format_type: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {}", e))?;
+
+    // Derive a Referer from the URL's origin — many CDNs require this.
+    let referer = reqwest::Url::parse(&url)
+        .ok()
+        .and_then(|parsed| parsed.origin().ascii_serialization().parse().ok())
+        .unwrap_or_else(|| String::from("https://www.google.com/"));
+
+    let response = client.get(&url)
+        .header("Referer", &referer)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch image: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Image URL returned HTTP {}", response.status()));
+    }
+
+    let bytes = response.bytes()
+        .await
+        .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+
+    let images_dir = utils::get_images_dir();
+    catalog::process_and_save_image_bytes(&bytes, &images_dir, &format_type)
+        .map_err(|e| e.to_string())
+}
+
 /// v0.14.8: Save a product image to a dedicated temp folder
 /// (%LOCALAPPDATA%\A-Collection-Share\) and immediately open Windows
 /// Explorer with the file highlighted/selected. The user can then drag
