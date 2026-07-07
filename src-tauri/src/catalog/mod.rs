@@ -208,9 +208,19 @@ pub fn add_product(conn: &Connection, product: &Product) -> Result<i64, rusqlite
     // setting, which ShareCenter never read, so every product ended up with
     // retail_price = sale_price (due to the legacy migration backfill) and
     // every caption showed "Save Rs. 0!".
+    //
+    // v0.22.5: Also persist qty_in_head_office. Previously this column was
+    // skipped on INSERT (defaulting to 0), and only the database migration
+    // backfill could populate it from stock_quantity — which only fired when
+    // qty_in_head_office was 0. The Catalog overview + Dashboard read
+    // `qty_in_head_office ?? stock_quantity` (preferring qty_in_head_office),
+    // so a freshly added product showed 0 stock until the next app restart.
+    // Now both columns get the same value at INSERT time. ?12 is reused
+    // (same product.stock_quantity value) — same pattern as ?16 for
+    // created_at + updated_at.
     conn.execute(
-        "INSERT INTO products (sku, name, category, color, design, season, cost_price, sale_price, purchase_price, description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at, retail_price, brand, fabric)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16, ?17, ?18, ?19)",
+        "INSERT INTO products (sku, name, category, color, design, season, cost_price, sale_price, purchase_price, description, tags, stock_quantity, qty_in_head_office, status, images, supplier_id, created_at, updated_at, retail_price, brand, fabric)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13, ?14, ?15, ?16, ?16, ?17, ?18, ?19)",
         rusqlite::params![
             &product.sku, &product.name, &product.category,
             &product.color, &product.design, &product.season,
@@ -227,9 +237,18 @@ pub fn update_product(conn: &Connection, product: &Product) -> Result<(), rusqli
     let now = chrono::Utc::now().to_rfc3339();
     // v0.14.3: Update retail_price + brand + fabric alongside the legacy
     // 16 columns. See add_product() comment for full context.
+    //
+    // v0.22.5: Also update qty_in_head_office in lockstep with
+    // stock_quantity. The Catalog form's "Total Stock (Head Office)" box
+    // writes to stock_quantity, but the Catalog overview + Dashboard read
+    // `qty_in_head_office ?? stock_quantity` (preferring qty_in_head_office).
+    // Without this sync, the legacy column got updated while the
+    // profit-mode column stayed stale — UI showed the old value.
+    // ?12 is reused (same product.stock_quantity value, no new param).
     conn.execute(
         "UPDATE products SET sku=?1, name=?2, category=?3, color=?4, design=?5, season=?6,
-         cost_price=?7, sale_price=?8, purchase_price=?9, description=?10, tags=?11, stock_quantity=?12,
+         cost_price=?7, sale_price=?8, purchase_price=?9, description=?10, tags=?11,
+         stock_quantity=?12, qty_in_head_office=?12,
          status=?13, images=?14, supplier_id=?15, updated_at=?16,
          retail_price=?17, brand=?18, fabric=?19 WHERE id=?20",
         rusqlite::params![

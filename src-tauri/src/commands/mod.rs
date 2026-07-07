@@ -1348,10 +1348,19 @@ pub async fn import_from_catalog_json(
         "https://xpunjabi.github.io/a-collection-catalog/data/catalog.json".to_string()
     });
 
+    // Derive the catalog's image base URL from the catalog.json URL.
+    // catalog.json lives at <base>/data/catalog.json — images live at <base>/data/images/<filename>.
+    // We swap the trailing "catalog.json" with "images/".
+    let image_base_url = url
+        .rsplitn(2, "catalog.json")
+        .last()
+        .unwrap_or("")
+        .to_string() + "images/";
+
     // Fetch JSON
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent("a-collection-head-office/0.22.0")
+        .user_agent("a-collection-head-office/0.22.5")
         .build()
         .map_err(|e| format!("HTTP client build failed: {}", e))?;
 
@@ -1362,31 +1371,50 @@ pub async fn import_from_catalog_json(
     let catalog: CatalogJsonImport = serde_json::from_str(&body)
         .map_err(|e| format!("Failed to parse catalog.json: {}", e))?;
 
-    let conn = state.0.lock().await;
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let mut imported = 0;
-    let mut skipped = 0;
-    let mut failed = 0;
-    let mut errors: Vec<String> = Vec::new();
-
-    for product in &catalog.products {
-        let sku = product.sku.as_deref().unwrap_or("");
-
-        // Check if SKU already exists (skip duplicates)
-        if !sku.is_empty() {
-            let existing: Option<i64> = (&*conn).query_row(
-                "SELECT id FROM products WHERE sku = ?1",
-                rusqlite::params![sku],
-                |r| r.get(0),
-            ).ok();
-            if existing.is_some() {
-                skipped += 1;
-                continue;
+    // ====================================================================
+    // Phase 1a: Acquire DB lock briefly to filter out SKUs that already exist.
+    // Lock is dropped BEFORE any HTTP `.await` for image downloads (Rule #12:
+    // NEVER hold DB Mutex across `.await`).
+    // ====================================================================
+    let existing_skus: std::collections::HashSet<String> = {
+        let conn = state.0.lock().await;
+        let mut set = std::collections::HashSet::new();
+        for product in &catalog.products {
+            if let Some(sku) = product.sku.as_ref() {
+                if !sku.is_empty() {
+                    let exists: Option<i64> = (&*conn).query_row(
+                        "SELECT id FROM products WHERE sku = ?1",
+                        rusqlite::params![sku],
+                        |r| r.get(0),
+                    ).ok();
+                    if exists.is_some() {
+                        set.insert(sku.clone());
+                    }
+                }
             }
         }
+        set
+    }; // ← DB lock dropped here
 
-        // Map availability to profit_status
+    // Build the list of products to import (skip duplicates).
+    // Pre-compute the per-product import data so Phase 1b/2 don't re-read
+    // catalog.products with filter logic.
+    struct ProductToImport<'a> {
+        product: &'a CatalogProduct,
+        images_json: String,
+        qty_in_ho: i64,
+        profit_status: Option<String>,
+    }
+
+    let mut to_import: Vec<ProductToImport> = Vec::new();
+    let mut skipped = 0;
+    for product in &catalog.products {
+        let sku = product.sku.as_deref().unwrap_or("");
+        if !sku.is_empty() && existing_skus.contains(sku) {
+            skipped += 1;
+            continue;
+        }
+
         let profit_status = if product.availability == "sold_out" {
             Some("sold_out".to_string())
         } else if product.availability == "low_stock" {
@@ -1395,62 +1423,132 @@ pub async fn import_from_catalog_json(
             None
         };
 
-        // Default qty for imported products (user can edit later)
         let qty_in_ho: i64 = if product.availability == "sold_out" { 0 } else { 3 };
 
         let images_json = serde_json::to_string(&product.images)
             .unwrap_or_else(|_| "[]".to_string());
 
-        // 22 columns, 22 placeholders (?1..?22), 22 params — all in same order.
-        // No `design` column here because catalog.json does not carry it
-        // (catalog.json: brand/whatsapp_number at top, products carry
-        //  sku/name/sale_price/retail_price/category/color/fabric/season/
-        //  description/images/availability only).
-        //
-        // created_at and updated_at intentionally share the same `&now`
-        // value (both point to the import timestamp). They use TWO distinct
-        // placeholder slots (?21 and ?22) — not a duplicated placeholder.
-        // rusqlite counts placeholder occurrences, so a duplicated `?22` would
-        // read as 23 values for 22 columns (the v0.22.3 bug).
-        match (&*conn).execute(
-            "INSERT INTO products (sku, name, category, color, season, description, images,
-                cost_price, sale_price, purchase_price, stock_quantity, status,
-                qty_in_head_office, qty_with_agents, qty_sold, qty_reserved, profit_status,
-                retail_price, brand, fabric, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
-            rusqlite::params![
-                sku,                                  // ?1
-                &product.name,                        // ?2
-                product.category.as_deref().unwrap_or(""),  // ?3
-                product.color.as_deref().unwrap_or(""),     // ?4
-                product.season.as_deref().unwrap_or(""),    // ?5
-                product.description.as_deref().unwrap_or(&product.name),  // ?6
-                &images_json,                         // ?7
-                0.0,                                  // ?8  cost_price (private)
-                product.sale_price,                   // ?9
-                product.sale_price,                   // ?10 purchase_price fallback
-                qty_in_ho,                            // ?11 stock_quantity
-                "active",                             // ?12 status
-                qty_in_ho,                            // ?13 qty_in_head_office
-                0,                                    // ?14 qty_with_agents
-                0,                                    // ?15 qty_sold
-                0,                                    // ?16 qty_reserved
-                profit_status,                        // ?17 profit_status
-                product.retail_price,                 // ?18 retail_price
-                catalog.brand.as_deref().unwrap_or(""),     // ?19 brand
-                product.fabric.as_deref().unwrap_or(""),    // ?20 fabric
-                &now,                                 // ?21 created_at
-                &now,                                 // ?22 updated_at (same value, distinct slot)
-            ],
-        ) {
-            Ok(_) => imported += 1,
-            Err(e) => {
-                failed += 1;
-                errors.push(format!("{}: {}", product.name, e));
-                if errors.len() > 5 { break; }  // Limit error list
+        to_import.push(ProductToImport {
+            product,
+            images_json,
+            qty_in_ho,
+            profit_status,
+        });
+    }
+
+    // ====================================================================
+    // Phase 1b: Download all product images to AppData/images/.
+    // No DB lock held — HTTP I/O only. Skips files that already exist on disk
+    // (so re-running import after a partial failure doesn't re-download).
+    // Failures are logged but don't abort the import — product text data
+    // still lands in the DB. Ali bhai can manually add missing images later
+    // via the Edit Product form.
+    // ====================================================================
+    let images_dir = crate::utils::get_images_dir();
+    let mut images_downloaded = 0u32;
+    let mut images_skipped = 0u32;
+    let mut image_errors: Vec<String> = Vec::new();
+
+    for item in &to_import {
+        for filename in &item.product.images {
+            if filename.is_empty() {
+                continue;
+            }
+            let dest_path = images_dir.join(filename);
+            if dest_path.exists() {
+                images_skipped += 1;
+                continue;
+            }
+
+            let img_url = format!("{}{}", image_base_url, filename);
+            match client.get(&img_url).send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        match resp.bytes().await {
+                            Ok(bytes) => {
+                                if let Err(e) = std::fs::write(&dest_path, &bytes) {
+                                    image_errors.push(
+                                        format!("{}: write failed: {}", filename, e)
+                                    );
+                                } else {
+                                    images_downloaded += 1;
+                                }
+                            }
+                            Err(e) => image_errors.push(
+                                format!("{}: read body failed: {}", filename, e)
+                            ),
+                        }
+                    } else {
+                        image_errors.push(
+                            format!("{}: HTTP {}", filename, resp.status())
+                        );
+                    }
+                }
+                Err(e) => image_errors.push(
+                    format!("{}: fetch failed: {}", filename, e)
+                ),
             }
         }
     }
+
+    // ====================================================================
+    // Phase 2: Acquire DB lock and INSERT all products.
+    // No `.await` inside this block — pure sync rusqlite calls.
+    // ====================================================================
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut imported = 0u32;
+    let mut failed = 0u32;
+    let mut errors: Vec<String> = Vec::new();
+
+    {
+        let conn = state.0.lock().await;
+
+        for item in &to_import {
+            let product = item.product;
+            // 22 columns, 22 placeholders (?1..?22), 22 params — all in same order.
+            // No `design` column here because catalog.json does not carry it.
+            // created_at + updated_at use distinct slots (?21, ?22) but share
+            // the same `&now` value.
+            match (&*conn).execute(
+                "INSERT INTO products (sku, name, category, color, season, description, images,
+                    cost_price, sale_price, purchase_price, stock_quantity, status,
+                    qty_in_head_office, qty_with_agents, qty_sold, qty_reserved, profit_status,
+                    retail_price, brand, fabric, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                rusqlite::params![
+                    product.sku.as_deref().unwrap_or(""),                  // ?1
+                    &product.name,                                          // ?2
+                    product.category.as_deref().unwrap_or(""),              // ?3
+                    product.color.as_deref().unwrap_or(""),                 // ?4
+                    product.season.as_deref().unwrap_or(""),                // ?5
+                    product.description.as_deref().unwrap_or(&product.name),// ?6
+                    &item.images_json,                                      // ?7
+                    0.0,                                                    // ?8  cost_price (private)
+                    product.sale_price,                                     // ?9
+                    product.sale_price,                                     // ?10 purchase_price fallback
+                    item.qty_in_ho,                                         // ?11 stock_quantity
+                    "active",                                               // ?12 status
+                    item.qty_in_ho,                                         // ?13 qty_in_head_office
+                    0,                                                      // ?14 qty_with_agents
+                    0,                                                      // ?15 qty_sold
+                    0,                                                      // ?16 qty_reserved
+                    &item.profit_status,                                    // ?17 profit_status
+                    product.retail_price,                                   // ?18 retail_price
+                    catalog.brand.as_deref().unwrap_or(""),                 // ?19 brand
+                    product.fabric.as_deref().unwrap_or(""),                // ?20 fabric
+                    &now,                                                   // ?21 created_at
+                    &now,                                                   // ?22 updated_at (same value, distinct slot)
+                ],
+            ) {
+                Ok(_) => imported += 1,
+                Err(e) => {
+                    failed += 1;
+                    errors.push(format!("{}: {}", product.name, e));
+                    if errors.len() > 5 { break; }  // Limit error list
+                }
+            }
+        }
+    } // ← DB lock dropped here
 
     Ok(serde_json::json!({
         "total_in_catalog": catalog.products.len(),
@@ -1460,6 +1558,9 @@ pub async fn import_from_catalog_json(
         "errors": errors,
         "brand": catalog.brand.unwrap_or_default(),
         "whatsapp_number": catalog.whatsapp_number.unwrap_or_default(),
+        "images_downloaded": images_downloaded,
+        "images_skipped_existing": images_skipped,
+        "image_errors": image_errors,
     }))
 }
 
