@@ -189,6 +189,14 @@ export default function AiWorkspace() {
     // Page-Agent reads the DOM, decides actions, and uses our existing
     // call_ai_provider pipeline via the Tauri bridge. If Agent Mode is
     // OFF (default), use the existing ask_ai flow — no behavior change.
+    //
+    // v0.23.2 FIX: Previous version mutated aiMessages array directly
+    // via `.push()` without going through Zustand's `set()`. This caused
+    // (a) React not to re-render properly, and (b) when other state
+    // changes triggered a re-render, the malformed message object
+    // (using `content` instead of `text` field) crashed FormattedMessage
+    // → entire app black screen. Fixed by using proper `setState()` and
+    // matching the existing message schema `{ role, text }`.
     if (agentMode) {
       if (pendingImage) {
         setToast('Agent Mode does not support image input in Phase 1. Toggle off Agent Mode to send images.')
@@ -196,26 +204,34 @@ export default function AiWorkspace() {
       }
       const prompt = text
       setInputText('')
-      // Optimistically show the user's message in the chat
-      useAppStore.getState().aiMessages.push({
-        role: 'user', content: prompt, ts: Date.now()
-      } as any)
+      // Push user message through proper Zustand setState so React
+      // re-renders cleanly. Schema must match existing aiMessages type:
+      // { role, text, ...optional fields }. `role` must be the literal
+      // union type — TS strict mode widens string literals to `string`.
+      useAppStore.setState((state) => ({
+        aiMessages: [...state.aiMessages, { role: 'user' as const, text: prompt }],
+      }))
       setAgentStatus('Agent thinking…')
       try {
         const result = await executeAgentTask(prompt)
         setAgentStatus(null)
-        // Push the agent's final response into the existing chat stream.
-        // ExecutionResult.data holds the agent's final text response
-        // (from the 'done' tool's `text` arg).
-        useAppStore.getState().aiMessages.push({
-          role: 'assistant',
-          content: result.data || '(agent completed task with no message)',
-          ts: Date.now(),
-          viaAgent: true,
-        } as any)
+        // Push the agent's final response. ExecutionResult.data holds the
+        // agent's final text response (from the 'done' tool's `text` arg).
+        // Same setState pattern — never mutate array directly.
+        useAppStore.setState((state) => ({
+          aiMessages: [...state.aiMessages, {
+            role: 'assistant' as const,
+            text: result.data || '(agent completed task with no message)',
+          }].slice(-50),  // Match existing sendAiMessage's 50-msg cap
+        }))
       } catch (err) {
         setAgentStatus(null)
-        setToast(`Agent error: ${err}`)
+        useAppStore.setState((state) => ({
+          aiMessages: [...state.aiMessages, {
+            role: 'assistant' as const,
+            text: `Agent error: ${err}`,
+          }],
+        }))
       }
       return
     }
