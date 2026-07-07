@@ -1401,35 +1401,40 @@ pub async fn import_from_catalog_json(
         let images_json = serde_json::to_string(&product.images)
             .unwrap_or_else(|_| "[]".to_string());
 
+        // 22 columns, 22 placeholders, 22 params — all in same order.
+        // No `design` column here because catalog.json does not carry it
+        // (catalog.json: brand/whatsapp_number at top, products carry
+        //  sku/name/sale_price/retail_price/category/color/fabric/season/
+        //  description/images/availability only).
         match (&*conn).execute(
             "INSERT INTO products (sku, name, category, color, season, description, images,
                 cost_price, sale_price, purchase_price, stock_quantity, status,
                 qty_in_head_office, qty_with_agents, qty_sold, qty_reserved, profit_status,
                 retail_price, brand, fabric, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?21)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?22)",
             rusqlite::params![
-                sku,
-                &product.name,
-                product.category.as_deref().unwrap_or(""),
-                product.color.as_deref().unwrap_or(""),
-                "",  // design (not in catalog.json)
-                product.season.as_deref().unwrap_or(""),
-                product.description.as_deref().unwrap_or(&product.name),
-                &images_json,
-                0.0,  // cost_price (private, not in catalog)
-                product.sale_price,
-                product.sale_price,  // purchase_price fallback
-                qty_in_ho,  // stock_quantity
-                "active",  // status
-                qty_in_ho,  // qty_in_head_office
-                0,  // qty_with_agents
-                0,  // qty_sold
-                0,  // qty_reserved
-                profit_status,
-                product.retail_price,
-                catalog.brand.as_deref().unwrap_or(""),
-                product.fabric.as_deref().unwrap_or(""),
-                &now,
+                sku,                                  // ?1
+                &product.name,                        // ?2
+                product.category.as_deref().unwrap_or(""),  // ?3
+                product.color.as_deref().unwrap_or(""),     // ?4
+                product.season.as_deref().unwrap_or(""),    // ?5
+                product.description.as_deref().unwrap_or(&product.name),  // ?6
+                &images_json,                         // ?7
+                0.0,                                  // ?8  cost_price (private)
+                product.sale_price,                   // ?9
+                product.sale_price,                   // ?10 purchase_price fallback
+                qty_in_ho,                            // ?11 stock_quantity
+                "active",                             // ?12 status
+                qty_in_ho,                            // ?13 qty_in_head_office
+                0,                                    // ?14 qty_with_agents
+                0,                                    // ?15 qty_sold
+                0,                                    // ?16 qty_reserved
+                profit_status,                        // ?17 profit_status
+                product.retail_price,                 // ?18 retail_price
+                catalog.brand.as_deref().unwrap_or(""),     // ?19 brand
+                product.fabric.as_deref().unwrap_or(""),    // ?20 fabric
+                &now,                                 // ?21 created_at
+                &now,                                 // ?22 updated_at (same value)
             ],
         ) {
             Ok(_) => imported += 1,
