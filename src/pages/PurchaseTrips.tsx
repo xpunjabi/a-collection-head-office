@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../stores/store'
+import { fmtMoney } from '../utils/format'
 import {
   Plus, X, Calendar, MapPin, Truck, Utensils, Package, Wallet,
   Trash2, Edit3, Calculator, ArrowLeft
@@ -190,7 +191,7 @@ export default function PurchaseTripsPage() {
     } catch (err) { alert(`Error: ${err}`) }
   }
 
-  const fmtMoney = (n: number) => `Rs. ${n.toFixed(2)}`
+  // v0.25.3: fmtMoney moved to shared util (src/utils/format.ts)
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' })
 
   const totalTripExpense = travelCost + transportCost + foodCost + loadingCost + miscCost

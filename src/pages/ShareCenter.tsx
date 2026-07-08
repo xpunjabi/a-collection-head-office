@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useAppStore } from '../stores/store'
+import { fmtMoney } from '../utils/format'
 import {
   Share2, MessageCircle, Facebook, Instagram, Copy, Check,
   AlertTriangle, RefreshCw, Sparkle, Send, Save, Trash2, Brain,
@@ -601,7 +602,7 @@ Write in Hinglish. Return ONLY the JSON.`
 
   // === HELPERS ===
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
-  const fmtMoney = (n: number) => `Rs. ${n.toFixed(0)}`
+  // v0.25.3: fmtMoney moved to shared util (src/utils/format.ts)
 
   return (
     <div className="space-y-6">

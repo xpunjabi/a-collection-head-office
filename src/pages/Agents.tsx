@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore, AgentSummary, AgentLedgerEntry } from '../stores/store'
+import { fmtMoney } from '../utils/format'
 import {
   Plus, X, User, Package, Trash2,
   ArrowDownToLine, ArrowUpFromLine, Banknote, Scale, History
@@ -192,7 +193,7 @@ export default function AgentsPage() {
   }
 
   // ---- Helper render functions ----
-  const fmtMoney = (n: number) => `Rs. ${n.toFixed(0)}`
+  // v0.25.3: fmtMoney moved to shared util (src/utils/format.ts)
   const fmtDate = (iso?: string | null) => iso ? new Date(iso).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
 
   type ActionKind = 'send' | 'return' | 'sell' | 'cash' | 'adjust'

@@ -6,6 +6,7 @@ import {
   ArrowUpFromLine, ShoppingCart, RefreshCw, Sparkles, MapPin
 } from 'lucide-react'
 import { AgentSummary, Product } from '../stores/store'
+import { fmtMoney } from '../utils/format'
 
 interface ShareLog {
   id: number
@@ -55,7 +56,6 @@ export default function Dashboard() {
   const totalSold = products.reduce((s, p) => s + (p.qty_sold ?? 0), 0)
   const totalOutstanding = agents.reduce((s, a) => s + a.outstanding_balance, 0)
 
-  const fmtMoney = (n: number) => `Rs. ${n.toFixed(0)}`
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 
   const topAgentsByOutstanding = [...agents].sort((a, b) => b.outstanding_balance - a.outstanding_balance).slice(0, 5)
