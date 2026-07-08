@@ -1008,6 +1008,19 @@ async fn call_openai(
             format!("Failed parsing API response as JSON: {}. Raw body: {}", e, preview)
         })?;
 
+    // v0.25.7: Try multiple response shapes since OpenAI-compatible providers
+    // don't all follow the exact same structure.
+    //
+    // Standard OpenAI:        choices[0].message.content (string)
+    // Vision/multimodal:      choices[0].message.content (array of {type, text})
+    // Legacy completion API:  choices[0].text
+    // OpenRouter reasoning:   choices[0].message.content may be null when
+    //                         reasoning models return content in a different
+    //                         field — try message.reasoning as fallback
+    //
+    // If none of these work, show the raw JSON (first 800 chars) so the
+    // user can see exactly what the provider returned — much more useful
+    // than "Failed to extract text" with no context.
     let content_val = &res_json["choices"][0]["message"]["content"];
     let text = if let Some(s) = content_val.as_str() {
         s.to_string()
@@ -1019,8 +1032,26 @@ async fn call_openai(
             }
         }
         combined
+    } else if let Some(s) = res_json["choices"][0]["text"].as_str() {
+        // Legacy completion API format
+        s.to_string()
+    } else if let Some(s) = res_json["choices"][0]["message"]["reasoning"].as_str() {
+        // Some reasoning models (e.g. DeepSeek R1 via OpenRouter) return
+        // the answer in message.reasoning when content is empty/null
+        s.to_string()
     } else {
-        return Err("Failed to extract text from OpenAI response".to_string());
+        // None of the standard paths worked — show raw JSON for diagnosis
+        let raw_preview = serde_json::to_string_pretty(&res_json)
+            .unwrap_or_else(|_| res_json.to_string());
+        let truncated = if raw_preview.len() > 800 {
+            format!("{}...(truncated)", &raw_preview[..800])
+        } else {
+            raw_preview
+        };
+        return Err(format!(
+            "Could not find text in API response. Tried: choices[0].message.content, choices[0].text, choices[0].message.reasoning\n\nRaw JSON response:\n{}",
+            truncated
+        ));
     };
 
     Ok(text)
