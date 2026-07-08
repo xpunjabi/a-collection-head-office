@@ -546,14 +546,13 @@ pub async fn ask_ai(
                     extraction, &Some(prompt.clone()), &provider, &api_key, &model, &web_evidence, image_data.as_deref()
                 ).await {
                     Ok(draft) => {
-                            draft.title, draft.brand, draft.fabric, draft.design_code, draft.web_evidence_count);
                         fast_path_data = Some(ai::AssistantResult::NewCatalogDraft(draft));
                     }
-                    Err(e) => {
+                    Err(_e) => {
                     }
                 }
             }
-            Err(e) => {
+            Err(_e) => {
             }
         }
     }
