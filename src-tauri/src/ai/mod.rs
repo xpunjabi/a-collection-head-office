@@ -968,16 +968,18 @@ async fn call_openai(
     // was just "Failed parsing OpenAI response: error decoding response body"
     // — useless for debugging. Now we capture the raw text and show the
     // first 500 chars in the error so the user can see what went wrong.
+    // Note: res.text() consumes res, so we must capture status FIRST.
+    let status = res.status();
     let raw_body = res.text().await.unwrap_or_default();
 
-    if !res.status().is_success() {
+    if !status.is_success() {
         // Truncate long error bodies (some providers return huge HTML pages)
         let preview = if raw_body.len() > 500 {
             format!("{}...(truncated)", &raw_body[..500])
         } else {
             raw_body.clone()
         };
-        return Err(format!("API returned HTTP {}: {}", url, preview));
+        return Err(format!("API returned HTTP {} {}: {}", status, url, preview));
     }
 
     // Check for SSE streaming format (some providers return "data: {...}\n\n"
