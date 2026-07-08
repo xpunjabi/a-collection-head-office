@@ -73,7 +73,7 @@ pub fn try_local_intent(conn: &Connection, prompt: &str) -> Option<AiResponse> {
     parse_local_intent(conn, prompt)
 }
 
-pub fn get_ai_config(conn: &Connection) -> Result<(String, String, String), String> {
+pub fn get_ai_config(conn: &Connection) -> Result<(String, String, String, String), String> {
     get_ai_settings(conn)
 }
 
@@ -518,6 +518,7 @@ pub async fn call_ai_provider(
     provider: &str,
     api_key: &str,
     model: &str,
+    base_url: &str,
     system_prompt: &str,
     user_prompt: &str,
     image_data: Option<&str>,
@@ -525,7 +526,7 @@ pub async fn call_ai_provider(
 ) -> Result<String, String> {
     match provider {
         "gemini" => call_gemini(api_key, model, system_prompt, user_prompt, image_data, history).await,
-        "openai" => call_openai(api_key, model, system_prompt, user_prompt, image_data, history).await,
+        "openai" => call_openai(api_key, model, base_url, system_prompt, user_prompt, image_data, history).await,
         "claude" => call_claude(api_key, model, system_prompt, user_prompt, image_data, history).await,
         // Local LLM (Ollama) uses a different API shape for multimodal — out of scope for this fix.
         "local" => call_local_llm(model, system_prompt, user_prompt).await,
@@ -556,13 +557,13 @@ pub fn parse_draft_from_response(text: &str) -> Option<DraftResponse> {
     None
 }
 
-pub fn prepare_marketing_data(conn: &Connection, product_id: i64) -> Result<(crate::catalog::Product, String, String, String, bool, bool), String> {
+pub fn prepare_marketing_data(conn: &Connection, product_id: i64) -> Result<(crate::catalog::Product, String, String, String, String, bool, bool), String> {
     let profile = get_business_profile(conn).unwrap_or_default();
     let has_fb = profile["sales_channels"].as_array().map(|a| a.iter().any(|v| v.as_str().unwrap_or("").to_lowercase().contains("facebook"))).unwrap_or(false);
     let has_wa = profile["sales_channels"].as_array().map(|a| a.iter().any(|v| v.as_str().unwrap_or("").to_lowercase().contains("whatsapp"))).unwrap_or(false);
     let product = crate::catalog::get_product_by_id(conn, product_id).map_err(|e| e.to_string())?;
-    let (provider, api_key, model) = get_ai_settings(conn)?;
-    Ok((product, provider, api_key, model, has_fb, has_wa))
+    let (provider, api_key, model, base_url) = get_ai_settings(conn)?;
+    Ok((product, provider, api_key, model, base_url, has_fb, has_wa))
 }
 
 pub fn build_marketing_prompt(product: &crate::catalog::Product, has_fb: bool, has_wa: bool) -> String {
@@ -617,9 +618,9 @@ IMPORTANT RULES:
     )
 }
 
-pub async fn generate_marketing_content(provider: &str, api_key: &str, model: &str, prompt: &str) -> Result<Vec<MarketingContent>, String> {
+pub async fn generate_marketing_content(provider: &str, api_key: &str, model: &str, base_url: &str, prompt: &str) -> Result<Vec<MarketingContent>, String> {
     let sys_prompt = "You are a social media marketing assistant for a Pakistani clothing business. Generate engaging posts in Roman Urdu or English.";
-    let response = call_ai_provider(provider, api_key, model, sys_prompt, prompt, None, None).await?;
+    let response = call_ai_provider(provider, api_key, model, base_url, sys_prompt, prompt, None, None).await?;
 
     let body = response.trim();
     let json_str = if body.starts_with("```") {
@@ -636,8 +637,8 @@ pub async fn generate_marketing_content(provider: &str, api_key: &str, model: &s
     serde_json::from_str::<Vec<MarketingContent>>(&json_str).map_err(|e| format!("Marketing parse error: {}", e))
 }
 
-fn get_ai_settings(conn: &Connection) -> Result<(String, String, String), String> {
-    let mut stmt = conn.prepare("SELECT key, value FROM settings WHERE key IN ('ai_provider', 'ai_api_key', 'ai_model')")
+fn get_ai_settings(conn: &Connection) -> Result<(String, String, String, String), String> {
+    let mut stmt = conn.prepare("SELECT key, value FROM settings WHERE key IN ('ai_provider', 'ai_api_key', 'ai_model', 'ai_base_url')")
         .map_err(|e| e.to_string())?;
 
     let mut provider = "gemini".to_string();
@@ -649,6 +650,9 @@ fn get_ai_settings(conn: &Connection) -> Result<(String, String, String), String
     // Existing installs that already have ai_model set in settings are NOT
     // affected — their stored value overrides this default.
     let mut model = "gemini-2.0-flash".to_string();
+    // v0.25.4: base_url for OpenAI-compatible providers (OpenRouter, Together,
+    // Groq, local LM Studio, etc.). Empty = use provider's default endpoint.
+    let mut base_url = "".to_string();
 
     let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
@@ -658,6 +662,7 @@ fn get_ai_settings(conn: &Connection) -> Result<(String, String, String), String
             "ai_provider" => provider = val,
             "ai_api_key" => api_key = val,
             "ai_model" => model = val,
+            "ai_base_url" => base_url = val,
             _ => {}
         }
     }
@@ -668,7 +673,7 @@ fn get_ai_settings(conn: &Connection) -> Result<(String, String, String), String
     if model == "gemini-1.5-flash" {
         model = "gemini-2.0-flash".to_string();
     }
-    Ok((provider, api_key, model))
+    Ok((provider, api_key, model, base_url))
 }
 
 fn log_ai_request(conn: &Connection, prompt: &str, response: &str, provider: &str) -> Result<(), String> {
@@ -876,6 +881,7 @@ async fn call_gemini(
 async fn call_openai(
     api_key: &str,
     model: &str,
+    base_url: &str,
     system_prompt: &str,
     user_prompt: &str,
     image_data: Option<&str>,
@@ -886,7 +892,21 @@ async fn call_openai(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let url = "https://api.openai.com/v1/chat/completions";
+    // v0.25.4: Use custom base_url if set (OpenAI-compatible providers like
+    // OpenRouter, Together, Groq, local LM Studio, etc.). If empty, default
+    // to the official OpenAI API endpoint. The base_url should be the full
+    // endpoint path (e.g. "https://openrouter.ai/api/v1/chat/completions")
+    // or just the base (e.g. "https://openrouter.ai/api/v1") — we append
+    // "/chat/completions" if the URL doesn't already end with it.
+    let url = if base_url.is_empty() {
+        "https://api.openai.com/v1/chat/completions".to_string()
+    } else if base_url.ends_with("/chat/completions") {
+        base_url.to_string()
+    } else if base_url.ends_with('/') {
+        format!("{}chat/completions", base_url)
+    } else {
+        format!("{}/chat/completions", base_url)
+    };
 
     // Build the messages array as a multi-turn conversation.
     let mut messages: Vec<serde_json::Value> = vec![

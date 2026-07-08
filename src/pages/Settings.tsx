@@ -15,6 +15,7 @@ export default function Settings() {
   const [aiProvider, setAiProvider] = useState('gemini')
   const [apiKey, setApiKey] = useState('')
   const [aiModel, setAiModel] = useState('')
+  const [aiBaseUrl, setAiBaseUrl] = useState('')
   const [backupPath, setBackupPath] = useState('')
   const [backupInterval, setBackupInterval] = useState('7')
   const [backupResult, setBackupResult] = useState('')
@@ -52,6 +53,7 @@ export default function Settings() {
     if (settings.ai_provider) setAiProvider(settings.ai_provider)
     if (settings.ai_api_key) setApiKey(settings.ai_api_key)
     if (settings.ai_model) setAiModel(settings.ai_model)
+    if (settings.ai_base_url) setAiBaseUrl(settings.ai_base_url)
     if (settings.backup_path) setBackupPath(settings.backup_path)
     if (settings.backup_interval_days) setBackupInterval(settings.backup_interval_days)
     // v0.15.0: Load catalog settings
@@ -66,6 +68,7 @@ export default function Settings() {
       await updateSetting('ai_provider', aiProvider)
       await updateSetting('ai_api_key', apiKey)
       await updateSetting('ai_model', aiModel)
+      await updateSetting('ai_base_url', aiBaseUrl)
       alert('AI settings saved successfully!')
     } catch (err) {
       alert(`Failed to save AI settings: ${err}`)
@@ -230,10 +233,34 @@ export default function Settings() {
               type="text"
               value={aiModel}
               onChange={(e) => setAiModel(e.target.value)}
-              placeholder="E.g. gemini-1.5-flash, gpt-4o"
+              placeholder="E.g. gemini-2.5-flash, gpt-4o"
               className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
             />
           </div>
+
+          {/* v0.25.4: Base URL for OpenAI-compatible providers.
+              Only shown when provider is "openai" — Gemini/Claude have
+              their own fixed endpoints. OpenAI-compatible providers
+              (OpenRouter, Together, Groq, local LM Studio, etc.) need
+              a custom endpoint URL. Leave empty for official OpenAI API. */}
+          {aiProvider === 'openai' && (
+            <div>
+              <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">
+                API Base URL <span className="text-gray-600 normal-case font-normal">(optional — for OpenAI-compatible providers)</span>
+              </label>
+              <input
+                type="text"
+                value={aiBaseUrl}
+                onChange={(e) => setAiBaseUrl(e.target.value)}
+                placeholder="https://api.openai.com/v1 (leave empty for default)"
+                className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+              />
+              <p className="text-[10px] text-gray-600 mt-1">
+                For OpenRouter: https://openrouter.ai/api/v1 · For Groq: https://api.groq.com/openai/v1 ·
+                Leave empty for official OpenAI.
+              </p>
+            </div>
+          )}
 
           <button
             onClick={handleSaveAiSettings}

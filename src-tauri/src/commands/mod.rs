@@ -516,10 +516,10 @@ pub async fn ask_ai(
                 // hardcoded "gemini" — meaning OpenAI/Claude/Ollama users
                 // would get a Gemini API call (which fails without a Gemini
                 // API key).
-                let (provider, api_key, model) = {
+                let (provider, api_key, model, base_url) = {
                     let conn = state.0.lock().await;
                     let cfg = ai::get_ai_config(&conn)?;
-                    (cfg.0.clone(), cfg.1.clone(), cfg.2.clone())
+                    (cfg.0.clone(), cfg.1.clone(), cfg.2.clone(), cfg.3.clone())
                 };
 
                 // Build search query from extraction text
@@ -543,7 +543,7 @@ pub async fn ask_ai(
                 };
 
                 match crate::ai::catalog_composer::generate_catalog_draft(
-                    extraction, &Some(prompt.clone()), &provider, &api_key, &model, &web_evidence, image_data.as_deref()
+                    extraction, &Some(prompt.clone()), &provider, &api_key, &model, &base_url, &web_evidence, image_data.as_deref()
                 ).await {
                     Ok(draft) => {
                         fast_path_data = Some(ai::AssistantResult::NewCatalogDraft(draft));
@@ -586,7 +586,7 @@ pub async fn ask_ai(
         });
     }
 
-    let (provider, api_key, model) = {
+    let (provider, api_key, model, base_url) = {
         let conn = state.0.lock().await;
         ai::get_ai_config(&conn)?
     };
@@ -626,7 +626,7 @@ pub async fn ask_ai(
     };
 
     let response_text = ai::call_ai_provider(
-        &provider, &api_key, &model, &system_prompt, &prompt,
+        &provider, &api_key, &model, &base_url, &system_prompt, &prompt,
         image_data.as_deref(),
         history.as_deref(),
     ).await?;
@@ -892,10 +892,10 @@ pub async fn generate_social_post(
     // Capture provider along with api_key + model. Previously cfg.0 (provider)
     // was discarded, causing marketing_engine to silently use hardcoded
     // "gemini" — OpenAI/Claude/Ollama users could not use Generate Post.
-    let (provider, api_key, model) = {
+    let (provider, api_key, model, base_url) = {
         let conn = state.0.lock().await;
         let cfg = ai::get_ai_config(&conn)?;
-        (cfg.0.clone(), cfg.1.clone(), cfg.2.clone())
+        (cfg.0.clone(), cfg.1.clone(), cfg.2.clone(), cfg.3.clone())
     };
     let product = {
         let conn = state.0.lock().await;
@@ -919,12 +919,12 @@ pub async fn generate_social_post(
 
 #[tauri::command]
 pub async fn generate_marketing(state: State<'_, DbState>, product_id: i64) -> Result<Vec<ai::MarketingContent>, String> {
-    let (product, provider, api_key, model, has_fb, has_wa) = {
+    let (product, provider, api_key, model, base_url, has_fb, has_wa) = {
         let conn = state.0.lock().await;
         ai::prepare_marketing_data(&conn, product_id)?
     };
     let prompt = ai::build_marketing_prompt(&product, has_fb, has_wa);
-    let posts = ai::generate_marketing_content(&provider, &api_key, &model, &prompt).await?;
+    let posts = ai::generate_marketing_content(&provider, &api_key, &model, &base_url, &prompt).await?;
     let now = chrono::Utc::now().to_rfc3339();
     {
         let conn = state.0.lock().await;

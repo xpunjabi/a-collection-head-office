@@ -51,6 +51,7 @@ pub async fn generate_catalog_draft(
     provider: &str,
     api_key: &str,
     model: &str,
+    base_url: &str,
     web_evidence: &Option<WebEvidence>,
     image_base64: Option<&str>,
 ) -> Result<CatalogDraft, String> {
@@ -109,7 +110,7 @@ FIELD RULES:\n\
         }
     }
 
-    let response = super::call_ai_provider(provider, api_key, model, &system_prompt, &user_prompt, image_base64, None).await?;
+    let response = super::call_ai_provider(provider, api_key, model, base_url, &system_prompt, &user_prompt, image_base64, None).await?;
 
     let body = response.trim();
 
