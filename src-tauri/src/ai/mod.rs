@@ -848,13 +848,17 @@ async fn call_gemini(
         "contents": contents
     });
 
-    // googleSearch tool conflicts with inline image data in Gemini API.
-    // Only enable it for text-only requests.
-    if !has_image {
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("tools".to_string(), json!([{"googleSearch": {}}]));
-        }
-    }
+    // v0.25.5: Removed googleSearch tool hardcode.
+    // Previously, every text-only request had "tools": [{"googleSearch": {}}]
+    // injected. This caused two problems:
+    // 1. Newer Gemini models (3.5-flash, 3.1-flash) may handle tools
+    //    differently — googleSearch consumes separate grounding quota and
+    //    can trigger 429 errors faster on models with smaller free-tier
+    //    limits.
+    // 2. The tool adds latency and token cost for simple chat queries
+    //    that don't need web search.
+    // If web search is needed in the future, it should be an explicit
+    // user toggle in Settings, not a silent default.
 
     let res = client.post(&url)
         .json(&payload)
@@ -945,21 +949,62 @@ async fn call_openai(
         "messages": messages
     });
 
-    let res = client.post(url)
+    // v0.25.5: Add OpenRouter-friendly headers. OpenRouter requires
+    // HTTP-Referer and X-Title for proper attribution. Other OpenAI-
+    // compatible providers ignore these headers, so they're safe to
+    // always include.
+    let res = client.post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .header("HTTP-Referer", "https://github.com/xpunjabi/a-collection-head-office")
+        .header("X-Title", "A Collection Head Office")
         .json(&payload)
         .send()
         .await
-        .map_err(|e| format!("Failed sending request to OpenAI: {}", e))?;
+        .map_err(|e| format!("Failed sending request to OpenAI-compatible API: {}", e))?;
+
+    // v0.25.5: Capture raw response body BEFORE trying to parse as JSON.
+    // Previously, if the provider returned HTML/SSE/empty body, the error
+    // was just "Failed parsing OpenAI response: error decoding response body"
+    // — useless for debugging. Now we capture the raw text and show the
+    // first 500 chars in the error so the user can see what went wrong.
+    let raw_body = res.text().await.unwrap_or_default();
 
     if !res.status().is_success() {
-        let err_body = res.text().await.unwrap_or_default();
-        return Err(format!("OpenAI API returned error: {}", err_body));
+        // Truncate long error bodies (some providers return huge HTML pages)
+        let preview = if raw_body.len() > 500 {
+            format!("{}...(truncated)", &raw_body[..500])
+        } else {
+            raw_body.clone()
+        };
+        return Err(format!("API returned HTTP {}: {}", url, preview));
     }
 
-    let res_json: serde_json::Value = res.json()
-        .await
-        .map_err(|e| format!("Failed parsing OpenAI response: {}", e))?;
+    // Check for SSE streaming format (some providers return "data: {...}\n\n"
+    // even for non-streaming requests). Strip the prefix if present.
+    let json_str = if raw_body.starts_with("data: ") {
+        // Take the first data chunk and parse it
+        let line = raw_body.lines()
+            .find(|l| l.starts_with("data: ") && !l.contains("[DONE]"))
+            .map(|l| l.trim_start_matches("data: "))
+            .unwrap_or("");
+        if line.is_empty() {
+            return Err(format!("API returned empty SSE stream. Raw body (first 500 chars): {}", &raw_body[..raw_body.len().min(500)]));
+        }
+        line.to_string()
+    } else {
+        raw_body
+    };
+
+    let res_json: serde_json::Value = serde_json::from_str(&json_str)
+        .map_err(|e| {
+            let preview = if json_str.len() > 500 {
+                format!("{}...(truncated)", &json_str[..500])
+            } else {
+                json_str.clone()
+            };
+            format!("Failed parsing API response as JSON: {}. Raw body: {}", e, preview)
+        })?;
 
     let content_val = &res_json["choices"][0]["message"]["content"];
     let text = if let Some(s) = content_val.as_str() {
