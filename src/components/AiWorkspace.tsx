@@ -125,9 +125,6 @@ export default function AiWorkspace() {
         color: draft.color || undefined,
       }
 
-      // Debug: log what we're sending
-      console.log('[handleAddToCatalog] Saving draft:', JSON.stringify(draftToSave, null, 2))
-
       await invoke('save_catalog_draft', { draft: draftToSave })
       setToast('Item added to catalog!')
       removeAiMessage(index)

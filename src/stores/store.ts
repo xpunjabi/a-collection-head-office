@@ -186,15 +186,6 @@ export interface MarketingPost {
   hashtags: string[];
 }
 
-export interface WorkspaceAsset {
-  id: string;
-  name: string;
-  path?: string;
-  data?: string;
-  mime: string;
-  type: 'image' | 'document' | 'link';
-  source_url?: string;
-}
 
 interface AppState {
   // Navigation & UI
@@ -207,7 +198,6 @@ interface AppState {
 
   // Products
   products: Product[];
-  isLoadingProducts: boolean;
   fetchProducts: () => Promise<void>;
   addProduct: (product: Product) => Promise<number>;
   updateProduct: (product: Product) => Promise<void>;
@@ -218,7 +208,6 @@ interface AppState {
 
   // Customers
   customers: Customer[];
-  isLoadingCustomers: boolean;
   fetchCustomers: () => Promise<void>;
   addCustomer: (customer: Customer) => Promise<void>;
   updateCustomer: (customer: Customer) => Promise<void>;
@@ -247,10 +236,6 @@ interface AppState {
   marketingForProduct: (productId: number) => Promise<void>;
 
   // Workspace assets
-  workspaceAssets: WorkspaceAsset[];
-  addWorkspaceAsset: (asset: WorkspaceAsset) => void;
-  removeWorkspaceAsset: (id: string) => void;
-  clearWorkspaceAssets: () => void;
 
   // AI Assistant Chat
   aiMessages: { role: 'user' | 'assistant'; text: string; action?: string; product_draft?: ProductDraft; confidence?: number; missing_fields?: string[]; suggested_actions?: string[]; fast_path_data?: AssistantResult; social_post?: MarketingPost; image_data?: string }[];
@@ -271,15 +256,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Products
   products: [],
-  isLoadingProducts: false,
   fetchProducts: async () => {
-    set({ isLoadingProducts: true });
     try {
       const products: Product[] = await invoke('get_products');
-      set({ products, isLoadingProducts: false });
+      set({ products });
     } catch (err) {
       console.error(err);
-      set({ isLoadingProducts: false });
     }
   },
   addProduct: async (product) => {
@@ -332,15 +314,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Customers
   customers: [],
-  isLoadingCustomers: false,
   fetchCustomers: async () => {
-    set({ isLoadingCustomers: true });
     try {
       const customers: Customer[] = await invoke('get_customers');
-      set({ customers, isLoadingCustomers: false });
+      set({ customers });
     } catch (err) {
       console.error(err);
-      set({ isLoadingCustomers: false });
     }
   },
   addCustomer: async (customer) => {
@@ -483,14 +462,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // Workspace assets
-  workspaceAssets: [],
-  addWorkspaceAsset: (asset) => set((state) => ({
-    workspaceAssets: [...state.workspaceAssets, asset],
-  })),
-  removeWorkspaceAsset: (id) => set((state) => ({
-    workspaceAssets: state.workspaceAssets.filter((a) => a.id !== id),
-  })),
-  clearWorkspaceAssets: () => set({ workspaceAssets: [] }),
 
   // AI Assistant Chat
   aiMessages: [

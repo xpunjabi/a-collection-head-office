@@ -406,6 +406,29 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
     // v0.12.6: Clean up duplicate agents (same name, different agent_code)
     // that were created before the name-check fix in sync_locations_to_agents.
     cleanup_duplicate_agents(conn)?;
+
+    // v0.25.0: Drop dead tables that were created in early versions but
+    // never used. These tables consumed disk space and added schema noise
+    // without serving any feature. DROP IF EXISTS is safe — if the table
+    // doesn't exist (fresh install), the statement is a no-op.
+    //   - business_memory: AI memory feature never wired up (v0.4.0)
+    //   - product_drafts: AI drafts kept in Zustand state, not DB (v0.4.0)
+    //   - media_assets: image metadata never stored here (v0.4.0)
+    //   - suppliers: supplier UI never built (v0.1.0)
+    //   - locations: replaced by agents in v0.11.0, sync function removed
+    //   - product_locations: per-location stock never used (v0.1.0)
+    let dead_tables = [
+        "business_memory",
+        "product_drafts",
+        "media_assets",
+        "suppliers",
+        "product_locations",
+        "locations",
+    ];
+    for table in &dead_tables {
+        let _ = conn.execute(&format!("DROP TABLE IF EXISTS {}", table), []);
+    }
+
     Ok(())
 }
 
@@ -503,110 +526,6 @@ fn seed_locations(conn: &Connection) -> Result<()> {
         let locs = [("Head Office", "Main Office"), ("Shakargarh Shop", "Shakargarh City")];
         for (name, addr) in &locs {
             conn.execute("INSERT INTO locations (name, address, created_at) VALUES (?1, ?2, ?3)", rusqlite::params![name, addr, &now])?;
-        }
-    }
-    Ok(())
-}
-
-/// Issue #6 fix: one-time migration that syncs `business_profile.sales_areas`
-/// into the `locations` table. Any sales_area name not already in `locations`
-/// is inserted (preserving existing rows). This runs on every startup via
-/// run_migrations but only inserts missing rows — idempotent.
-fn sync_sales_areas_to_locations(conn: &Connection) -> Result<()> {
-    let profile_val: Result<String, _> = conn.query_row(
-        "SELECT value FROM settings WHERE key = 'business_profile'", [], |row| row.get(0),
-    );
-    let profile_str = match profile_val {
-        Ok(s) => s,
-        Err(_) => return Ok(()), // no business_profile setting yet — skip
-    };
-    let profile: serde_json::Value = match serde_json::from_str(&profile_str) {
-        Ok(v) => v,
-        Err(_) => return Ok(()),
-    };
-    let areas = match profile["sales_areas"].as_array() {
-        Some(a) => a,
-        None => return Ok(()),
-    };
-    let now = chrono::Utc::now().to_rfc3339();
-    for area in areas {
-        if let Some(name) = area.as_str() {
-            // INSERT OR IGNORE relies on the UNIQUE constraint on locations.name
-            // to skip rows that already exist. This makes the sync fully
-            // idempotent — safe to run on every startup.
-            let _ = conn.execute(
-                "INSERT OR IGNORE INTO locations (name, address, created_at) VALUES (?1, ?2, ?3)",
-                rusqlite::params![name, "", &now],
-            );
-        }
-    }
-    Ok(())
-}
-
-/// v0.11.0: One-time (idempotent) migration that creates an agent entry for
-/// each existing location. This bridges the old locations table to the new
-/// agents table so users don't lose their existing location data.
-///
-/// Each location becomes an agent with:
-///   - name = location name (e.g., "Narowal", "Shakargarh")
-///   - agent_code = "LOC-<id>" (derived from location id, stable)
-///   - city = location name
-///   - is_active = same as location.is_active
-///
-/// Safe to run on every startup — INSERT OR IGNORE skips agents that already
-/// exist (matched by agent_code).
-fn sync_locations_to_agents(conn: &Connection) -> Result<()> {
-    let now = chrono::Utc::now().to_rfc3339();
-    // Select all locations and insert a matching agent for each (if not exists).
-    let mut stmt = match conn.prepare("SELECT id, name, address, is_active FROM locations") {
-        Ok(s) => s,
-        Err(_) => return Ok(()), // locations table might not exist yet — skip
-    };
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
-            row.get::<_, i64>(3)?,
-        ))
-    });
-    let rows = match rows {
-        Ok(r) => r,
-        Err(_) => return Ok(()),
-    };
-    for row in rows {
-        if let Ok((loc_id, name, address, is_active)) = row {
-            // v0.12.6 fix: Check if an agent with the same name already
-            // exists BEFORE inserting. Previously, INSERT OR IGNORE only
-            // checked agent_code uniqueness — so if the user manually added
-            // an agent named "Narowal" (agent_code "AGT-XXX"), and a
-            // location named "Narowal" also existed (agent_code "LOC-Y"),
-            // both would be inserted → duplicate agents by name.
-            let existing_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM agents WHERE LOWER(name) = LOWER(?1)",
-                rusqlite::params![&name],
-                |r| r.get(0),
-            ).unwrap_or(0);
-            if existing_count > 0 {
-                // Agent with same name already exists — skip to avoid duplicate
-                continue;
-            }
-            let agent_code = format!("LOC-{}", loc_id);
-            let _ = conn.execute(
-                "INSERT OR IGNORE INTO agents (agent_code, name, phone, city, area, address_notes, notes, is_active, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                rusqlite::params![
-                    &agent_code,
-                    &name,
-                    "", // phone — empty, user can fill later
-                    &name, // city = location name
-                    "", // area — empty
-                    address.unwrap_or_default(),
-                    "Migrated from locations table",
-                    is_active,
-                    &now,
-                    &now,
-                ],
-            );
         }
     }
     Ok(())

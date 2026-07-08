@@ -1,12 +1,11 @@
-use crate::catalog::{self, Product, ProductLocationStock};
+use crate::catalog::{self, Product};
 use crate::inventory::{self, InventorySummary, LowStockItem, DeadStockItem, BestSellerItem};
 use crate::customers::{self, Customer, OrderItemInput, OrderHistory};
 use crate::reports::{self, SalesReport, InventoryReport, CustomerSummaryReport};
-use crate::locations::{self, Location};
 use crate::agents::{self, AgentSummary, AgentLedgerEntry};
 use crate::purchase_trips::{self, PurchaseTripSummary};
 use crate::adapters::duckduckgo::{self, WebEvidence};
-use crate::ai::{self, AiResponse, KnowledgeEntry};
+use crate::ai::{self, AiResponse};
 use crate::utils;
 use tauri::async_runtime::Mutex;
 use std::path::Path;
@@ -59,12 +58,6 @@ pub async fn get_products(state: State<'_, DbState>) -> Result<Vec<Product>, Str
 }
 
 #[tauri::command]
-pub async fn get_product(state: State<'_, DbState>, id: i64) -> Result<Product, String> {
-    let conn = state.0.lock().await;
-    catalog::get_product_by_id(&conn, id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn add_product(state: State<'_, DbState>, product: Product) -> Result<i64, String> {
     let conn = state.0.lock().await;
     catalog::add_product(&conn, &product).map_err(|e| e.to_string())
@@ -80,24 +73,6 @@ pub async fn update_product(state: State<'_, DbState>, product: Product) -> Resu
 pub async fn delete_product(state: State<'_, DbState>, id: i64) -> Result<(), String> {
     let conn = state.0.lock().await;
     catalog::delete_product(&conn, id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn get_product_locations(state: State<'_, DbState>, product_id: i64) -> Result<Vec<ProductLocationStock>, String> {
-    let conn = state.0.lock().await;
-    catalog::get_product_locations(&conn, product_id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn upsert_product_location(state: State<'_, DbState>, product_id: i64, location_id: i64, quantity: i64) -> Result<(), String> {
-    let conn = state.0.lock().await;
-    catalog::upsert_product_location(&conn, product_id, location_id, quantity).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn search_products_by_color(state: State<'_, DbState>, color: String) -> Result<Vec<Product>, String> {
-    let conn = state.0.lock().await;
-    catalog::search_by_color(&conn, &color).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -405,24 +380,6 @@ pub async fn save_drafts_to_folder_with_path(
 
 // ==================== LOCATIONS ====================
 
-#[tauri::command]
-pub async fn get_locations(state: State<'_, DbState>) -> Result<Vec<Location>, String> {
-    let conn = state.0.lock().await;
-    locations::get_all_locations(&conn).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn add_location(state: State<'_, DbState>, name: String, address: String) -> Result<i64, String> {
-    let conn = state.0.lock().await;
-    locations::add_location(&conn, &name, &address).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn update_location(state: State<'_, DbState>, id: i64, name: String, address: String, is_active: bool) -> Result<(), String> {
-    let conn = state.0.lock().await;
-    locations::update_location(&conn, id, &name, &address, is_active).map_err(|e| e.to_string())
-}
-
 // ==================== INVENTORY ====================
 
 #[tauri::command]
@@ -522,18 +479,15 @@ pub async fn ask_ai(
     image_data: Option<String>,
     history: Option<Vec<ai::ChatMessage>>,
 ) -> Result<AiResponse, String> {
-    println!("[ask_ai] instruction='{}' has_image={}", prompt, image_data.is_some());
 
     let extraction = if let Some(ref b64) = image_data {
         use base64::Engine as _;
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
             match crate::ai::ingestion::extract_local_data(&bytes) {
                 Ok(result) => {
-                    println!("[Local Extraction] qr={:?} ocr={:?}", result.qr_data, result.ocr_text);
                     Some(result)
                 }
                 Err(e) => {
-                    println!("[Local Extraction] Error: {}", e);
                     None
                 }
             }
@@ -553,11 +507,9 @@ pub async fn ask_ai(
         };
         match match_result {
             Ok(Some(mr)) => {
-                println!("[Local Match] Found: id={} title={} confidence={}", mr.item_id, mr.title, mr.confidence);
                 fast_path_data = Some(ai::AssistantResult::LocalMatchFound(mr));
             }
             Ok(None) => {
-                println!("[Local Match] No match found. Proceeding to web evidence + AI draft.");
                 // Capture provider along with api_key + model so we can pass
                 // it to catalog_composer. Previously cfg.0 (provider) was
                 // discarded, causing catalog_composer to silently use
@@ -580,11 +532,9 @@ pub async fn ask_ai(
                 let web_evidence: Option<WebEvidence> = if !search_query.is_empty() {
                     match duckduckgo::fetch_web_evidence(&search_query).await {
                         Ok(evidence) => {
-                            println!("[Web Evidence] Found {} results", evidence.result_count);
                             Some(evidence)
                         }
                         Err(e) => {
-                            println!("[Web Evidence] DuckDuckGo error: {}. Continuing with OCR text only.", e);
                             None
                         }
                     }
@@ -596,17 +546,14 @@ pub async fn ask_ai(
                     extraction, &Some(prompt.clone()), &provider, &api_key, &model, &web_evidence, image_data.as_deref()
                 ).await {
                     Ok(draft) => {
-                        println!("[AI Draft] title={} brand={:?} fabric={:?} design_code={:?} web_count={:?}",
                             draft.title, draft.brand, draft.fabric, draft.design_code, draft.web_evidence_count);
                         fast_path_data = Some(ai::AssistantResult::NewCatalogDraft(draft));
                     }
                     Err(e) => {
-                        println!("[AI Draft] Error: {}", e);
                     }
                 }
             }
             Err(e) => {
-                println!("[Local Match] Error: {}", e);
             }
         }
     }
@@ -628,7 +575,6 @@ pub async fn ask_ai(
     // produce a structured result — i.e. no image was uploaded, or local
     // extraction failed, or local_match + catalog_composer both yielded None.
     if fast_path_data.is_some() {
-        println!("[ask_ai] Fast path produced a result; skipping fallback AI call to avoid duplicate draft.");
         return Ok(AiResponse {
             text: String::new(),
             detected_action: None,
@@ -663,11 +609,9 @@ pub async fn ask_ai(
     let fallback_web_evidence: Option<WebEvidence> = if !prompt.trim().is_empty() {
         match duckduckgo::fetch_web_evidence(&prompt).await {
             Ok(evidence) => {
-                println!("[Fallback Web Evidence] Found {} results for query '{}'", evidence.result_count, prompt);
                 Some(evidence)
             }
             Err(e) => {
-                println!("[Fallback Web Evidence] DuckDuckGo error: {}. Continuing without web evidence.", e);
                 None
             }
         }
@@ -789,11 +733,9 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
         if !url.is_empty() {
             match download_and_save_image(url).await {
                 Ok(filename) => {
-                    println!("[save_catalog_draft] Downloaded web image: {}", filename);
                     serde_json::to_string(&[filename]).unwrap_or_else(|_| "[]".to_string())
                 }
                 Err(e) => {
-                    println!("[save_catalog_draft] Web image download failed: {}. Saving without image.", e);
                     "[]".to_string()
                 }
             }
@@ -1000,21 +942,9 @@ pub async fn generate_marketing(state: State<'_, DbState>, product_id: i64) -> R
 }
 
 #[tauri::command]
-pub async fn get_knowledge(state: State<'_, DbState>) -> Result<Vec<KnowledgeEntry>, String> {
-    let conn = state.0.lock().await;
-    ai::get_all_knowledge(&conn)
-}
-
-#[tauri::command]
 pub async fn save_knowledge(state: State<'_, DbState>, topic: String, content: String, source: String) -> Result<(), String> {
     let conn = state.0.lock().await;
     ai::save_knowledge(&conn, &topic, &content, &source)
-}
-
-#[tauri::command]
-pub async fn delete_knowledge(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = state.0.lock().await;
-    ai::delete_knowledge(&conn, id)
 }
 
 // ==================== SETTINGS ====================
@@ -1051,101 +981,6 @@ pub async fn backup_database_now(state: State<'_, DbState>) -> Result<String, St
     let dest = backup_dir.join(format!("manual_backup_{}.db", timestamp));
     std::fs::copy(db_src, &dest).map_err(|e| format!("Failed to copy: {}", e))?;
     Ok(dest.to_string_lossy().to_string())
-}
-
-/// v0.22.0: Create a FULL backup (DB + images + settings) as a ZIP archive.
-///
-/// Ali bhai's requirement after data loss: app should make daily full backup
-/// including everything (DB, images, settings/api keys) so that if files are
-/// accidentally deleted from one location, recovery is one-click.
-///
-/// Format: `full_backup_YYYYMMDD_HHMMSS.zip` containing:
-///   - database.db
-///   - images/ (all product images)
-///   - settings.json (all settings from DB)
-///
-/// Created in the configured backup_path.
-#[tauri::command]
-pub async fn create_full_backup(state: State<'_, DbState>) -> Result<String, String> {
-    use std::io::Write;
-    let conn = state.0.lock().await;
-    let backup_path = get_setting_val(&conn, "backup_path").map_err(|e| e.to_string())?;
-    if backup_path.is_empty() {
-        return Err("Backup path is not configured. Please set it in Settings first.".to_string());
-    }
-    let backup_dir = Path::new(&backup_path);
-    if !backup_dir.exists() {
-        return Err("Backup path does not exist.".to_string());
-    }
-
-    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let zip_filename = format!("full_backup_{}.zip", timestamp);
-    let zip_path = backup_dir.join(&zip_filename);
-
-    // Export settings as JSON (deref MutexGuard to access Connection methods)
-    let mut stmt = (&*conn)
-        .prepare("SELECT key, value FROM settings")
-        .map_err(|e| format!("Failed to prepare settings query: {}", e))?;
-    let all_settings: std::collections::HashMap<String, String> = stmt
-        .query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })
-        .map_err(|e| format!("Failed to read settings: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-    let settings_json = serde_json::to_string_pretty(&all_settings)
-        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-
-    // Build ZIP
-    let zip_file = std::fs::File::create(&zip_path)
-        .map_err(|e| format!("Failed to create zip: {}", e))?;
-    let mut zip = zip::ZipWriter::new(zip_file);
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-
-    // Add database.db
-    let db_path = utils::get_db_path();
-    if db_path.exists() {
-        let db_bytes = std::fs::read(&db_path)
-            .map_err(|e| format!("Failed to read DB: {}", e))?;
-        zip.start_file("database.db", opts)
-            .map_err(|e| format!("Failed to add DB to zip: {}", e))?;
-        zip.write_all(&db_bytes)
-            .map_err(|e| format!("Failed to write DB to zip: {}", e))?;
-    }
-
-    // Add settings.json
-    zip.start_file("settings.json", opts)
-        .map_err(|e| format!("Failed to add settings to zip: {}", e))?;
-    zip.write_all(settings_json.as_bytes())
-        .map_err(|e| format!("Failed to write settings: {}", e))?;
-
-    // Add all images
-    let images_dir = utils::get_images_dir();
-    if images_dir.exists() {
-        let image_files: Vec<_> = std::fs::read_dir(&images_dir)
-            .map_err(|e| format!("Failed to read images dir: {}", e))?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-            .collect();
-
-        for img_file in image_files {
-            let img_path = img_file.path();
-            if let Some(img_name) = img_path.file_name().and_then(|n| n.to_str()) {
-                let img_bytes = std::fs::read(&img_path)
-                    .map_err(|e| format!("Failed to read image {}: {}", img_name, e))?;
-                let zip_name = format!("images/{}", img_name);
-                zip.start_file(&zip_name, opts)
-                    .map_err(|e| format!("Failed to add image to zip: {}", e))?;
-                zip.write_all(&img_bytes)
-                    .map_err(|e| format!("Failed to write image to zip: {}", e))?;
-            }
-        }
-    }
-
-    zip.finish().map_err(|e| format!("Failed to finalize zip: {}", e))?;
-
-    Ok(zip_path.to_string_lossy().to_string())
 }
 
 /// v0.22.0: List available backup files (DB + ZIP) from backup_path.
@@ -1628,12 +1463,6 @@ pub async fn get_agents(state: State<'_, DbState>) -> Result<Vec<AgentSummary>, 
 }
 
 #[tauri::command]
-pub async fn get_agent(state: State<'_, DbState>, id: i64) -> Result<AgentSummary, String> {
-    let conn = state.0.lock().await;
-    agents::get_agent_summary(&conn, id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn add_agent(
     state: State<'_, DbState>,
     name: String,
@@ -1686,97 +1515,6 @@ pub async fn get_agent_ledger(
     let conn = state.0.lock().await;
     let limit = limit.unwrap_or(50);
     agents::get_agent_ledger_entries(&conn, agent_id, limit).map_err(|e| e.to_string())
-}
-
-/// v0.14.10: Edit an existing agent ledger entry's mutable fields
-/// (qty, unit_price, notes). After update, recalculates the affected
-/// product's denormalized stock columns so the Catalog/Agents UI stays
-/// in sync with the ledger.
-///
-/// Wrapped in a transaction for atomicity (same pattern as
-/// send_stock_to_agent / record_sale).
-#[tauri::command]
-pub async fn update_agent_ledger_entry(
-    state: State<'_, DbState>,
-    entry_id: i64,
-    qty: i64,
-    unit_price: f64,
-    notes: Option<String>,
-) -> Result<(), String> {
-    if qty < 0 {
-        return Err("Quantity cannot be negative.".to_string());
-    }
-    let conn = state.0.lock().await;
-    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
-
-    // Fetch the entry's product_id before update so we can recalc product stock after
-    let product_id: Option<i64> = conn.query_row(
-        "SELECT product_id FROM agent_ledger_entries WHERE id = ?1",
-        rusqlite::params![entry_id],
-        |r| r.get(0),
-    ).map_err(|e| {
-        let _ = conn.execute("ROLLBACK", []);
-        format!("Ledger entry not found: {}", e)
-    })?;
-
-    agents::update_ledger_entry(&conn, entry_id, qty, unit_price, notes.as_deref()).map_err(|e| {
-        let _ = conn.execute("ROLLBACK", []);
-        e.to_string()
-    })?;
-
-    // Recalc product stock if the entry had a product_id
-    if let Some(pid) = product_id {
-        agents::recalc_product_stock_from_ledger(&conn, pid).map_err(|e| {
-            let _ = conn.execute("ROLLBACK", []);
-            e.to_string()
-        })?;
-    }
-
-    conn.execute("COMMIT", []).map_err(|e| {
-        let _ = conn.execute("ROLLBACK", []);
-        e.to_string()
-    })?;
-    Ok(())
-}
-
-/// v0.14.10: Delete an agent ledger entry. After deletion, recalculates
-/// the affected product's stock columns. Wrapped in a transaction.
-#[tauri::command]
-pub async fn delete_agent_ledger_entry(
-    state: State<'_, DbState>,
-    entry_id: i64,
-) -> Result<(), String> {
-    let conn = state.0.lock().await;
-    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
-
-    // Fetch the entry's product_id before delete so we can recalc product stock after
-    let product_id: Option<i64> = conn.query_row(
-        "SELECT product_id FROM agent_ledger_entries WHERE id = ?1",
-        rusqlite::params![entry_id],
-        |r| r.get(0),
-    ).map_err(|e| {
-        let _ = conn.execute("ROLLBACK", []);
-        format!("Ledger entry not found: {}", e)
-    })?;
-
-    agents::delete_ledger_entry(&conn, entry_id).map_err(|e| {
-        let _ = conn.execute("ROLLBACK", []);
-        e.to_string()
-    })?;
-
-    // Recalc product stock if the entry had a product_id
-    if let Some(pid) = product_id {
-        agents::recalc_product_stock_from_ledger(&conn, pid).map_err(|e| {
-            let _ = conn.execute("ROLLBACK", []);
-            e.to_string()
-        })?;
-    }
-
-    conn.execute("COMMIT", []).map_err(|e| {
-        let _ = conn.execute("ROLLBACK", []);
-        e.to_string()
-    })?;
-    Ok(())
 }
 
 /// v0.14.10: Get current stock held by each agent for a specific product.
@@ -2302,12 +2040,6 @@ pub async fn remove_trip_item(state: State<'_, DbState>, item_id: i64) -> Result
     Ok(())
 }
 
-#[tauri::command]
-pub async fn recalculate_trip(state: State<'_, DbState>, trip_id: i64) -> Result<(), String> {
-    let conn = state.0.lock().await;
-    purchase_trips::recalculate_trip_allocations(&conn, trip_id).map_err(|e| e.to_string())
-}
-
 // ============================================================
 // v0.12.5 — Sales Recording (Head Office records ALL sales)
 // ============================================================
@@ -2473,49 +2205,6 @@ pub async fn record_sale(
     })?;
 
     Ok(sale_id)
-}
-
-/// Get recent sales with product names. Optionally filter by channel or agent.
-#[tauri::command]
-pub async fn get_sales(
-    state: State<'_, DbState>,
-    limit: Option<i64>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let conn = state.0.lock().await;
-    let limit = limit.unwrap_or(50);
-    let mut stmt = conn.prepare(
-        "SELECT s.id, s.product_id, s.sale_channel, s.sale_type, s.agent_id,
-                s.qty, s.unit_sale_price, s.total_sale_amount,
-                s.customer_name, s.customer_phone, s.notes, s.sale_date,
-                COALESCE(p.name, '(deleted)') AS product_name,
-                COALESCE(a.name, '') AS agent_name
-         FROM sales s
-         LEFT JOIN products p ON s.product_id = p.id
-         LEFT JOIN agents a ON s.agent_id = a.id
-         ORDER BY s.sale_date DESC, s.id DESC
-         LIMIT ?1"
-    ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(rusqlite::params![limit], |row| {
-        Ok(serde_json::json!({
-            "id": row.get::<_, i64>(0)?,
-            "product_id": row.get::<_, i64>(1)?,
-            "sale_channel": row.get::<_, String>(2)?,
-            "sale_type": row.get::<_, String>(3)?,
-            "agent_id": row.get::<_, Option<i64>>(4)?,
-            "qty": row.get::<_, i64>(5)?,
-            "unit_sale_price": row.get::<_, f64>(6)?,
-            "total_sale_amount": row.get::<_, f64>(7)?,
-            "customer_name": row.get::<_, String>(8)?,
-            "customer_phone": row.get::<_, String>(9)?,
-            "notes": row.get::<_, String>(10)?,
-            "sale_date": row.get::<_, String>(11)?,
-            "product_name": row.get::<_, String>(12)?,
-            "agent_name": row.get::<_, String>(13)?,
-        }))
-    }).map_err(|e| e.to_string())?;
-    let mut result = Vec::new();
-    for r in rows { result.push(r.map_err(|e| e.to_string())?); }
-    Ok(result)
 }
 
 // ============================================================

@@ -978,16 +978,13 @@ pub fn generate_webp_images(
                                 mapping.insert(original_filename, final_filename);
                             }
                             Err(e) => {
-                                eprintln!("[catalog_publish] Failed to save {}: {}", final_filename, e);
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("[catalog_publish] Failed to decode {}: {}", original_filename, e);
                     }
                 },
                 Err(e) => {
-                    eprintln!("[catalog_publish] Failed to open {}: {}", original_filename, e);
                 }
             }
         }
@@ -1425,7 +1422,6 @@ async fn upload_file(
                 }
                 // Exponential backoff: 2s, 4s, 8s
                 let delay = std::time::Duration::from_secs(2u64.pow(attempt));
-                eprintln!(
                     "[catalog_publish] upload_file attempt {} failed ({}), retrying in {:?}",
                     attempt, e, delay
                 );

@@ -6,7 +6,6 @@ mod catalog_publish;
 mod inventory;
 mod customers;
 mod reports;
-mod locations;
 mod agents;
 mod purchase_trips;
 mod adapters;
@@ -38,13 +37,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_products,
-            commands::get_product,
             commands::add_product,
             commands::update_product,
             commands::delete_product,
-            commands::get_product_locations,
-            commands::upsert_product_location,
-            commands::search_products_by_color,
             commands::export_products_csv,
             commands::import_products_csv,
             commands::upload_product_image,
@@ -53,7 +48,6 @@ fn main() {
             commands::save_image_from_url,
             commands::save_image_for_share,
             commands::save_drafts_to_folder_with_path,
-            commands::create_full_backup,
             commands::list_backups,
             commands::restore_backup,
             commands::import_from_catalog_json,
@@ -75,12 +69,7 @@ fn main() {
             commands::get_settings,
             commands::update_setting,
             commands::backup_database_now,
-            commands::get_knowledge,
             commands::save_knowledge,
-            commands::delete_knowledge,
-            commands::get_locations,
-            commands::add_location,
-            commands::update_location,
             commands::save_product_draft_to_catalog,
             commands::save_catalog_draft,
             commands::generate_social_post,
@@ -88,13 +77,10 @@ fn main() {
             commands::init_database,
             // v0.11.0 — Agents
             commands::get_agents,
-            commands::get_agent,
             commands::add_agent,
             commands::update_agent,
             commands::delete_agent,
             commands::get_agent_ledger,
-            commands::update_agent_ledger_entry,
-            commands::delete_agent_ledger_entry,
             commands::get_product_agent_stock,
             commands::send_stock_to_agent,
             commands::return_stock_from_agent,
@@ -116,10 +102,8 @@ fn main() {
             commands::delete_purchase_trip,
             commands::add_trip_item,
             commands::remove_trip_item,
-            commands::recalculate_trip,
             // v0.12.5 — Sales
             commands::record_sale,
-            commands::get_sales,
             // v0.15.0 — Public Catalog Publishing
             commands::preview_catalog_publish,
             commands::publish_catalog_to_github,

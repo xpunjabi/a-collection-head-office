@@ -27,9 +27,6 @@ import ShareCenter from './pages/ShareCenter'
 import PurchaseTripsPage from './pages/PurchaseTrips'
 import AiWorkspace from './components/AiWorkspace'
 
-// v0.13.1: SocialHub.tsx DELETED — merged into ShareCenter.
-// Locations tab also removed (agents table replaces it).
-
 const tabs = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'catalog', label: 'Catalog', icon: BookOpen },

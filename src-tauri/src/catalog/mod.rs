@@ -57,13 +57,6 @@ pub struct Product {
     pub profit_status: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ProductLocationStock {
-    pub location_id: i64,
-    pub location_name: String,
-    pub quantity: i64,
-}
-
 pub fn get_all_products(conn: &Connection) -> Result<Vec<Product>, rusqlite::Error> {
     let mut stmt = conn.prepare(
         "SELECT id, COALESCE(sku,''), name, category, color, design, season,
@@ -164,41 +157,6 @@ pub fn get_product_by_id(conn: &Connection, id: i64) -> Result<Product, rusqlite
     )
 }
 
-pub fn get_product_locations(conn: &Connection, product_id: i64) -> Result<Vec<ProductLocationStock>, rusqlite::Error> {
-    let mut stmt = conn.prepare(
-        "SELECT pl.location_id, l.name, pl.quantity
-         FROM product_locations pl JOIN locations l ON l.id = pl.location_id
-         WHERE pl.product_id = ?1 AND l.is_active = 1
-         ORDER BY l.name"
-    )?;
-    let rows = stmt.query_map([product_id], |row| {
-        Ok(ProductLocationStock {
-            location_id: row.get(0)?,
-            location_name: row.get(1)?,
-            quantity: row.get(2)?,
-        })
-    })?;
-    let mut result = Vec::new();
-    for r in rows { result.push(r?); }
-    Ok(result)
-}
-
-pub fn upsert_product_location(conn: &Connection, product_id: i64, location_id: i64, quantity: i64) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "INSERT INTO product_locations (product_id, location_id, quantity) VALUES (?1, ?2, ?3)
-         ON CONFLICT(product_id, location_id) DO UPDATE SET quantity = ?3",
-        params![product_id, location_id, quantity],
-    )?;
-    // Update total stock_quantity
-    let total: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(quantity),0) FROM product_locations WHERE product_id = ?1",
-        [product_id],
-        |r| r.get(0),
-    )?;
-    conn.execute("UPDATE products SET stock_quantity = ?1 WHERE id = ?2", params![total, product_id])?;
-    Ok(())
-}
-
 pub fn add_product(conn: &Connection, product: &Product) -> Result<i64, rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
     // v0.14.3: Persist retail_price + brand + fabric to products table.
@@ -266,7 +224,7 @@ pub fn update_product(conn: &Connection, product: &Product) -> Result<(), rusqli
 }
 
 pub fn delete_product(conn: &Connection, id: i64) -> Result<(), rusqlite::Error> {
-    conn.execute("DELETE FROM product_locations WHERE product_id = ?1", params![id])?;
+    // v0.25.0: Removed DELETE FROM product_locations — table dropped in migration.
     conn.execute("DELETE FROM products WHERE id = ?1", params![id])?;
     Ok(())
 }
@@ -373,33 +331,3 @@ pub fn process_and_save_image_bytes(img_bytes: &[u8], app_images_dir: &Path, for
     Ok(file_name)
 }
 
-pub fn search_by_color(conn: &Connection, color: &str) -> Result<Vec<Product>, rusqlite::Error> {
-    let search = format!("%{}%", color);
-    let mut stmt = conn.prepare(
-        "SELECT id, COALESCE(sku,''), name, category, color, design, season,
-                cost_price, sale_price, COALESCE(purchase_price, cost_price),
-                description, tags, stock_quantity, status, images, supplier_id, created_at, updated_at,
-                product_code, brand, fabric, size_info, base_unit_cost, landed_unit_cost,
-                retail_price, discount_price, source_trip_id,
-                qty_in_head_office, qty_with_agents, qty_sold, qty_reserved, profit_status
-         FROM products WHERE color LIKE ?1 AND status='active' ORDER BY name"
-    )?;
-    let rows = stmt.query_map([&search], |row| {
-        Ok(Product {
-            id: Some(row.get(0)?), sku: row.get(1)?, name: row.get(2)?,
-            category: row.get(3)?, color: row.get(4)?, design: row.get(5)?, season: row.get(6)?,
-            cost_price: row.get(7)?, sale_price: row.get(8)?, purchase_price: row.get(9)?,
-            description: row.get(10)?, tags: row.get(11)?, stock_quantity: row.get(12)?,
-            status: row.get(13)?, images: row.get(14)?, supplier_id: row.get(15)?,
-            created_at: row.get(16)?, updated_at: row.get(17)?,
-            product_code: row.get(18)?, brand: row.get(19)?, fabric: row.get(20)?,
-            size_info: row.get(21)?, base_unit_cost: row.get(22)?, landed_unit_cost: row.get(23)?,
-            retail_price: row.get(24)?, discount_price: row.get(25)?, source_trip_id: row.get(26)?,
-            qty_in_head_office: row.get(27)?, qty_with_agents: row.get(28)?,
-            qty_sold: row.get(29)?, qty_reserved: row.get(30)?, profit_status: row.get(31)?,
-        })
-    })?;
-    let mut products = Vec::new();
-    for p in rows { products.push(p?); }
-    Ok(products)
-}

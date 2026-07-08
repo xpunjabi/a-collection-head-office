@@ -145,7 +145,6 @@ export async function shareToPlatform(
       // If invoke succeeded, the Rust side already opened Explorer.
       // (explorer.exe /select,<path> is called from Rust on Windows)
       explorerOpened = true
-      console.log('[share] Image saved + Explorer opened:', savedImagePath)
     } catch (err) {
       console.warn('[share] Could not save image / open Explorer:', err)
     }
