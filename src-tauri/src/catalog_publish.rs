@@ -950,11 +950,22 @@ pub fn generate_webp_images(
             }
 
             // Generate catalog image filename: <stem>_catalog.jpg
+            // v0.24.2 FIX: If the source filename already ends with `_catalog`
+            // (e.g. image was imported from a previous catalog publish, or
+            // user attached an already-published image), do NOT append another
+            // `_catalog` suffix — that produced `_catalog_catalog.jpg` which
+            // GitHub's abuse detector rejected (400 "Whoa there!") and also
+            // caused SHA mismatches (422) because the catalog.json referenced
+            // a filename that didn't match what was on disk.
             let stem = std::path::Path::new(&original_filename)
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("image");
-            let final_filename = format!("{}_catalog.jpg", stem);
+            let final_filename = if stem.ends_with("_catalog") {
+                format!("{}.jpg", stem)
+            } else {
+                format!("{}_catalog.jpg", stem)
+            };
             let final_path = images_dir.join(&final_filename);
 
             // Load + resize to 400px max (preserves aspect ratio)
@@ -1392,6 +1403,49 @@ async fn upload_file(
     message: &str,
     content_b64: &str,
 ) -> Result<(), String> {
+    // v0.24.2: Retry up to 3 times on transient errors (429 rate limit,
+    // 5xx server errors, network failures). GitHub's secondary rate limit
+    // often triggers when publishing many files in rapid succession —
+    // backing off 2s/4s/8s gives the limit time to reset.
+    // 4xx errors other than 429 are NOT retried (they're permanent — bad
+    // request, auth failure, invalid SHA, etc.).
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut last_err: Option<String> = None;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match upload_file_once(client, api_base, token, path, message, content_b64).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                let is_retryable = e.contains("HTTP 429")
+                    || e.contains("HTTP 5")
+                    || e.contains("PUT failed:")
+                    || e.contains("GET failed:");
+                if !is_retryable || attempt == MAX_ATTEMPTS {
+                    return Err(e);
+                }
+                // Exponential backoff: 2s, 4s, 8s
+                let delay = std::time::Duration::from_secs(2u64.pow(attempt));
+                eprintln!(
+                    "[catalog_publish] upload_file attempt {} failed ({}), retrying in {:?}",
+                    attempt, e, delay
+                );
+                tokio::time::sleep(delay).await;
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| "upload_file exhausted retries".to_string()))
+}
+
+/// Single attempt to upload a file. Called by `upload_file` with retry logic.
+async fn upload_file_once(
+    client: &reqwest::Client,
+    api_base: &str,
+    token: &str,
+    path: &str,
+    message: &str,
+    content_b64: &str,
+) -> Result<(), String> {
     // Get existing SHA (if file exists)
     let get_url = format!("{}/{}", api_base, path);
     let existing_sha: Option<String> = match client
@@ -1411,7 +1465,7 @@ async fn upload_file(
                 None
             }
         }
-        Err(_) => None,
+        Err(e) => return Err(format!("GET failed: {}", e)),
     };
 
     // Build PUT body

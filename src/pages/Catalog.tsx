@@ -990,9 +990,9 @@ export default function Catalog() {
               </div>
 
               {/* Images — v0.14.0: clipboard paste + drag-drop + file picker
-                   v0.24.1: + URL paste button + document-level paste listener */}
+                   v0.24.1: + URL paste button + document-level paste listener
+                   v0.24.2: removed div onPaste (was duplicating with document listener) */}
               <div
-                onPaste={handlePasteImage}
                 onDrop={handleImageDrop}
                 onDragOver={(e) => e.preventDefault()}
               >
