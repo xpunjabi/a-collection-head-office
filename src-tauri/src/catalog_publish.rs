@@ -1422,9 +1422,6 @@ async fn upload_file(
                 }
                 // Exponential backoff: 2s, 4s, 8s
                 let delay = std::time::Duration::from_secs(2u64.pow(attempt));
-                    "[catalog_publish] upload_file attempt {} failed ({}), retrying in {:?}",
-                    attempt, e, delay
-                );
                 tokio::time::sleep(delay).await;
                 last_err = Some(e);
             }
