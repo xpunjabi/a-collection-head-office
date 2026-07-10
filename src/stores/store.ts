@@ -44,6 +44,9 @@ export interface Customer {
   location?: string;
   notes?: string;
   created_at?: string;
+  // v0.26.0: Udhar/Credit tracking
+  outstanding_balance?: number;
+  segment?: string;
 }
 
 // ============================================================

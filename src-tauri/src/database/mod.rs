@@ -371,6 +371,41 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
     add_col_if_missing(conn, "customers", "segment", "TEXT DEFAULT 'general'")?;
     add_col_if_missing(conn, "customers", "is_active", "INTEGER NOT NULL DEFAULT 1")?;
 
+    // v0.26.0: Udhar/Credit (खाता) tracking.
+    // customers.outstanding_balance = current total owed by this customer.
+    //   Updated atomically on every sale (increases by balance amount) and
+    //   every payment (decreases by payment amount).
+    // sales.amount_paid = how much the customer paid at time of sale.
+    //   Defaults to total_sale_amount (full payment) for backward compat.
+    // sales.balance = total_sale_amount - amount_paid (carried for audit).
+    // customer_payments table = each payment entry (date, amount, notes)
+    //   so a customer's payment history is fully traceable + editable.
+    add_col_if_missing(conn, "customers", "outstanding_balance", "REAL NOT NULL DEFAULT 0.0")?;
+    add_col_if_missing(conn, "sales", "amount_paid", "REAL NOT NULL DEFAULT 0.0")?;
+    add_col_if_missing(conn, "sales", "balance", "REAL NOT NULL DEFAULT 0.0")?;
+    add_col_if_missing(conn, "sales", "customer_id", "INTEGER")?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS customer_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            payment_date TEXT NOT NULL,
+            notes TEXT,
+            sale_id INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+            FOREIGN KEY(sale_id) REFERENCES sales(id) ON DELETE SET NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_customer_payments_customer
+         ON customer_payments(customer_id, payment_date DESC)",
+        [],
+    )?;
+
     // v0.14.4: Add performance indexes.
     // agent_ledger_entries is queried heavily by get_agent_summary,
     // return_stock_from_agent, record_sale (all do SUM(CASE WHEN entry_type=...)

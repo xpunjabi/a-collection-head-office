@@ -9,6 +9,10 @@ pub struct Customer {
     pub location: Option<String>,
     pub notes: Option<String>,
     pub created_at: String,
+    #[serde(default)]
+    pub outstanding_balance: f64,
+    #[serde(default)]
+    pub segment: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -34,9 +38,23 @@ pub struct OrderItemDetail {
     pub sale_price: f64,
 }
 
+/// v0.26.0: A single entry in a customer's balance history.
+/// Either a sale (increases balance) or a payment (decreases balance).
+/// Used by the customer detail modal to show the full khata timeline.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BalanceHistoryEntry {
+    pub id: i64,
+    pub entry_type: String,   // "sale" | "payment"
+    pub date: String,
+    pub description: String,  // product name + qty, or payment notes
+    pub amount: f64,          // positive for sale, negative for payment
+    pub balance_after: f64,   // running balance after this entry
+}
+
 pub fn get_all_customers(conn: &Connection) -> Result<Vec<Customer>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, phone, location, notes, created_at FROM customers ORDER BY name ASC"
+        "SELECT id, name, phone, location, notes, created_at, COALESCE(outstanding_balance, 0.0), COALESCE(segment, 'general')
+         FROM customers ORDER BY name ASC"
     )?;
     
     let customer_iter = stmt.query_map([], |row| {
@@ -47,6 +65,8 @@ pub fn get_all_customers(conn: &Connection) -> Result<Vec<Customer>, rusqlite::E
             location: row.get(3)?,
             notes: row.get(4)?,
             created_at: row.get(5)?,
+            outstanding_balance: row.get(6)?,
+            segment: row.get(7)?,
         })
     })?;
 

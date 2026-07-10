@@ -104,6 +104,9 @@ fn main() {
             commands::remove_trip_item,
             // v0.12.5 — Sales
             commands::record_sale,
+            // v0.26.0 — Customer Udhar/Credit (खाता)
+            commands::record_customer_payment,
+            commands::get_customer_balance_history,
             // v0.15.0 — Public Catalog Publishing
             commands::preview_catalog_publish,
             commands::publish_catalog_to_github,

@@ -1,6 +1,6 @@
 {
   "productName": "A Collection Head Office",
-  "version": "0.25.7",
+  "version": "0.26.0",
   "identifier": "com.airdropia.collectionheadoffice",
   "build": {
     "beforeDevCommand": "npm run dev",

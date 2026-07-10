@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react'
-import { useAppStore, Product } from '../stores/store'
+import { useAppStore, Product, Customer } from '../stores/store'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
 import {
@@ -98,6 +98,10 @@ export default function Catalog() {
   const [saleNotes, setSaleNotes] = useState('')
   const [saleSaving, setSaleSaving] = useState(false)
   const [agents, setAgents] = useState<{agent: {id: number; name: string; city?: string}}[]>([])
+  // v0.26.0: Udhar/Credit fields
+  const [saleAmountPaid, setSaleAmountPaid] = useState(0)
+  const [saleCustomerId, setSaleCustomerId] = useState<number | ''>('')
+  const [customersList, setCustomersList] = useState<Customer[]>([])
 
   // v0.15.0: Publish to Catalog state
   const [publishPreview, setPublishPreview] = useState<any>(null)
@@ -113,6 +117,11 @@ export default function Catalog() {
     invoke('get_agents').then((data: any) => setAgents(data || [])).catch(() => {})
   }, [])
 
+  // v0.26.0: Load customers for the sale modal dropdown
+  useEffect(() => {
+    invoke<Customer[]>('get_customers').then(setCustomersList).catch(() => {})
+  }, [])
+
   const handleOpenSaleModal = (p: Product) => {
     setSaleProduct(p)
     setSaleMode('direct')
@@ -123,6 +132,9 @@ export default function Catalog() {
     setSaleCustomerName('')
     setSaleCustomerPhone('')
     setSaleNotes('')
+    // v0.26.0: Default to full payment
+    setSaleAmountPaid(p.sale_price)
+    setSaleCustomerId('')
     setShowSaleModal(true)
   }
 
@@ -131,6 +143,7 @@ export default function Catalog() {
     if (saleQty <= 0) { alert('Quantity must be positive.'); return }
     setSaleSaving(true)
     try {
+      const total = saleQty * saleUnitPrice
       await invoke('record_sale', {
         productId: saleProduct.id,
         qty: saleQty,
@@ -140,10 +153,17 @@ export default function Catalog() {
         customerName: saleCustomerName || null,
         customerPhone: saleCustomerPhone || null,
         notes: saleNotes || null,
+        // v0.26.0: Pass amountPaid + customerId for udhar tracking
+        amountPaid: saleAmountPaid,
+        customerId: saleCustomerId !== '' ? Number(saleCustomerId) : null,
       })
       setShowSaleModal(false)
       await fetchProducts()
-      alert(`Sale recorded! ${saleQty} x ${saleProduct.name} = Rs. ${(saleQty * saleUnitPrice).toFixed(0)}`)
+      const balance = total - saleAmountPaid
+      const msg = balance > 0
+        ? `Sale recorded! ${saleQty} x ${saleProduct.name} = Rs. ${total.toFixed(0)} (Paid: Rs. ${saleAmountPaid.toFixed(0)}, Balance: Rs. ${balance.toFixed(0)})`
+        : `Sale recorded! ${saleQty} x ${saleProduct.name} = Rs. ${total.toFixed(0)} (Fully paid)`
+      alert(msg)
     } catch (err) {
       alert(`Error: ${err}`)
     } finally {
@@ -1116,7 +1136,36 @@ export default function Catalog() {
                 <span className="text-violet-300 font-bold">Rs. {(saleQty * saleUnitPrice).toFixed(0)}</span>
               </div>
 
-              {/* Customer (optional) */}
+              {/* Customer (optional) — v0.26.0: dropdown for existing customers */}
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">
+                  Select Customer <span className="text-gray-600 normal-case font-normal">(for udhar/khata tracking)</span>
+                </label>
+                <select
+                  value={saleCustomerId}
+                  onChange={e => {
+                    const val = e.target.value
+                    setSaleCustomerId(val === '' ? '' : Number(val))
+                    // Auto-fill name + phone if customer selected
+                    if (val !== '') {
+                      const c = customersList.find(c => c.id === Number(val))
+                      if (c) {
+                        setSaleCustomerName(c.name)
+                        setSaleCustomerPhone(c.phone || '')
+                      }
+                    }
+                  }}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                >
+                  <option value="">— Walk-in customer (no khata) —</option>
+                  {customersList.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{c.phone ? ` (${c.phone})` : ''}{(c.outstanding_balance ?? 0) > 0 ? ` — Udhar: Rs. ${(c.outstanding_balance ?? 0).toFixed(0)}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Customer Name</label>
@@ -1130,6 +1179,36 @@ export default function Catalog() {
                     placeholder="Optional"
                     className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
                 </div>
+              </div>
+
+              {/* v0.26.0: Amount Paid + Balance (Udhar/Credit) */}
+              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-400">Total:</span>
+                  <span className="text-white font-bold">Rs. {(saleQty * saleUnitPrice).toFixed(0)}</span>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Amount Paid</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={saleAmountPaid}
+                    onChange={e => setSaleAmountPaid(Math.max(0, Number(e.target.value)))}
+                    className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                  />
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-400">Balance (Udhar):</span>
+                  <span className={`font-bold ${(saleQty * saleUnitPrice) - saleAmountPaid > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    Rs. {Math.max(0, (saleQty * saleUnitPrice) - saleAmountPaid).toFixed(0)}
+                  </span>
+                </div>
+                {(saleQty * saleUnitPrice) - saleAmountPaid > 0 && saleCustomerId === '' && (
+                  <p className="text-[10px] text-amber-500">
+                    ⚠️ Select a customer above to track this udhar balance.
+                  </p>
+                )}
               </div>
 
               {/* Notes */}
