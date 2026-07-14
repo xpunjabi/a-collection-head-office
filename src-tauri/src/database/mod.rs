@@ -370,6 +370,12 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
     // segments beyond the defaults.
     add_col_if_missing(conn, "customers", "segment", "TEXT DEFAULT 'general'")?;
     add_col_if_missing(conn, "customers", "is_active", "INTEGER NOT NULL DEFAULT 1")?;
+    // v0.26.1: Add updated_at column to customers table. The original
+    // CREATE TABLE didn't include it, but v0.26.0's record_sale and
+    // record_customer_payment commands reference it when updating
+    // outstanding_balance. Without this column, those UPDATEs fail with
+    // "no such column: updated_at".
+    add_col_if_missing(conn, "customers", "updated_at", "TEXT")?;
 
     // v0.26.0: Udhar/Credit (खाता) tracking.
     // customers.outstanding_balance = current total owed by this customer.
