@@ -8,7 +8,8 @@ pub struct Customer {
     pub phone: Option<String>,
     pub location: Option<String>,
     pub notes: Option<String>,
-    pub created_at: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
     #[serde(default)]
     pub outstanding_balance: f64,
     #[serde(default)]
@@ -64,7 +65,7 @@ pub fn get_all_customers(conn: &Connection) -> Result<Vec<Customer>, rusqlite::E
             phone: row.get(2)?,
             location: row.get(3)?,
             notes: row.get(4)?,
-            created_at: row.get(5)?,
+            created_at: Some(row.get(5)?),
             outstanding_balance: row.get(6)?,
             segment: row.get(7)?,
         })
