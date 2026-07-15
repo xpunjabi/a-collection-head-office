@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useAppStore, AgentSummary, AgentLedgerEntry } from '../stores/store'
 import { fmtMoney } from '../utils/format'
 import {
-  Plus, X, User, Package, Trash2,
+  Plus, X, User, Trash2,
   ArrowDownToLine, ArrowUpFromLine, Banknote, History,
   BookOpen, Pencil
 } from 'lucide-react'
@@ -237,7 +237,7 @@ export default function AgentsPage() {
       await loadAgents()
       const updated = (await invoke('get_agents') as AgentSummary[]).find(a => a.agent.id === selectedAgent.agent.id)
       if (updated) await loadAgentDetail(updated)
-      alert('Manual entry added.')
+      alert('Return Cash entry added.')
     } catch (err) {
       alert(`Error: ${err}`)
     }
@@ -391,27 +391,25 @@ export default function AgentsPage() {
                 </div>
               </div>
 
-              {/* Quick action buttons */}
+              {/* Quick action buttons — v0.32.0: simplified to 4 buttons per bhai's request */}
               <div>
                 <label className="block text-xs font-semibold uppercase text-gray-400 mb-2">Quick Actions</label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <button onClick={() => openAction('send')} className="flex items-center space-x-1 px-3 py-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 rounded-lg text-xs font-medium">
                     <ArrowUpFromLine size={12} /><span>Send Stock</span>
                   </button>
                   <button onClick={() => openAction('return')} className="flex items-center space-x-1 px-3 py-2 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/20 rounded-lg text-xs font-medium">
                     <ArrowDownToLine size={12} /><span>Return Stock</span>
                   </button>
-                  <button onClick={() => openAction('sell')} className="flex items-center space-x-1 px-3 py-2 bg-violet-600/10 hover:bg-violet-600/20 text-violet-400 border border-violet-500/20 rounded-lg text-xs font-medium">
-                    <Package size={12} /><span>Report Sale</span>
-                  </button>
                   <button onClick={() => openAction('cash')} className="flex items-center space-x-1 px-3 py-2 bg-green-600/10 hover:bg-green-600/20 text-green-400 border border-green-500/20 rounded-lg text-xs font-medium">
                     <Banknote size={12} /><span>Receive Cash</span>
                   </button>
-                  {/* v0.31.0: Removed 'Adjust Balance' button — Manual Entry (below) does the same
-                      thing with more flexibility (maal value, advance, corrections). Reduces button clutter. */}
-                  {/* v0.29.0: Manual entry button — maal value/advance/correction */}
+                  {/* v0.32.0: Renamed 'Manual Entry' to 'Return Cash' per bhai's 4-button model.
+                      Removed 'Report Sale' (was 5th button) — agent sales can be tracked via
+                      Return Stock (stock leaves agent's hands). Return Cash handles:
+                      cash advance to agent, maal value without catalog link, corrections. */}
                   <button onClick={() => openManualEntry()} className="flex items-center space-x-1 px-3 py-2 bg-orange-600/10 hover:bg-orange-600/20 text-orange-400 border border-orange-500/20 rounded-lg text-xs font-medium">
-                    <BookOpen size={12} /><span>Manual Entry</span>
+                    <BookOpen size={12} /><span>Return Cash</span>
                   </button>
                 </div>
               </div>
@@ -453,22 +451,16 @@ export default function AgentsPage() {
                           let running = 0
                           const balances = new Map<number, number>()
                           for (const e of sorted) {
-                            // Sign convention: positive amount = agent owes more (or HO gave stock)
-                            // For agent's outstanding balance to HO:
-                            //   stock_sent → +amount (agent owes more for the stock)
-                            //   stock_returned → -amount (agent owes less, stock returned)
-                            //   sale_reported → -amount (agent sold, owes less for that stock)
-                            //   cash_received → -amount (agent paid back, owes less)
-                            //   balance_adjustment → +amount (signed: + means owes more, - means less)
-                            // Note: balance_adjustment is stored as -amount in DB (per adjust_agent_balance),
-                            // so the stored amount already has the correct sign for the running balance.
-                            // For other types, we need to compute the signed contribution.
+                            // v0.32.0: Fixed sign convention for running balance.
+                            // outstanding_balance = stock_sent - stock_returned - cash_received + adjustments
+                            // balance_adjustment is stored as -amount in DB (per adjust_agent_balance),
+                            // so we negate it back for the running balance.
                             let delta = 0
                             if (e.entry_type === 'stock_sent') delta = e.amount
                             else if (e.entry_type === 'stock_returned') delta = -e.amount
                             else if (e.entry_type === 'sale_reported') delta = -e.amount
                             else if (e.entry_type === 'cash_received') delta = -e.amount
-                            else if (e.entry_type === 'balance_adjustment') delta = e.amount  // stored as -user_input
+                            else if (e.entry_type === 'balance_adjustment') delta = -e.amount  // stored as -user_input, negate back
                             running += delta
                             balances.set(e.id as number, running)
                           }
@@ -664,12 +656,12 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {/* v0.29.0: Manual Ledger Entry Modal */}
+      {/* v0.29.0: Return Cash Modal (renamed from Manual Entry in v0.32.0) */}
       {showManualEntryModal && selectedAgent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-slate-900 border border-gray-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
             <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-slate-950/40">
-              <h3 className="text-lg font-bold text-white">Manual Ledger Entry</h3>
+              <h3 className="text-lg font-bold text-white">Return Cash</h3>
               <button onClick={() => setShowManualEntryModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-3">

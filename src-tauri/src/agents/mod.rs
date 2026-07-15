@@ -191,7 +191,7 @@ pub fn delete_agent(conn: &Connection, id: i64) -> Result<(), rusqlite::Error> {
 pub fn get_agent_summary(conn: &Connection, agent_id: i64) -> Result<AgentSummary, rusqlite::Error> {
     let agent = get_agent_by_id(conn, agent_id)?;
 
-    let (current_stock_units, total_stock_value_sent, total_stock_value_returned, total_cash_received, last_cash_at): (i64, f64, f64, f64, Option<String>) = conn.query_row(
+    let (current_stock_units, total_stock_value_sent, total_stock_value_returned, total_cash_received, total_adjustments, last_cash_at): (i64, f64, f64, f64, f64, Option<String>) = conn.query_row(
         "SELECT
             COALESCE(SUM(CASE WHEN entry_type = 'stock_sent' THEN qty ELSE 0 END) -
                      SUM(CASE WHEN entry_type = 'stock_returned' THEN qty ELSE 0 END) -
@@ -199,6 +199,7 @@ pub fn get_agent_summary(conn: &Connection, agent_id: i64) -> Result<AgentSummar
             COALESCE(SUM(CASE WHEN entry_type = 'stock_sent' THEN amount ELSE 0 END), 0.0) AS total_stock_value_sent,
             COALESCE(SUM(CASE WHEN entry_type = 'stock_returned' THEN amount ELSE 0 END), 0.0) AS total_stock_value_returned,
             COALESCE(SUM(CASE WHEN entry_type = 'cash_received' THEN amount ELSE 0 END), 0.0) AS total_cash_received,
+            COALESCE(SUM(CASE WHEN entry_type = 'balance_adjustment' THEN -amount ELSE 0 END), 0.0) AS total_adjustments,
             MAX(CASE WHEN entry_type = 'cash_received' THEN entry_date ELSE NULL END) AS last_cash_at
          FROM agent_ledger_entries WHERE agent_id = ?1",
         params![agent_id],
@@ -209,11 +210,18 @@ pub fn get_agent_summary(conn: &Connection, agent_id: i64) -> Result<AgentSummar
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
+                row.get(5)?,
             ))
         },
     )?;
 
-    let outstanding_balance = total_stock_value_sent - total_stock_value_returned - total_cash_received;
+    // v0.32.0: Include balance_adjustment entries in outstanding_balance.
+    // Previously these were ignored, so manual entries (maal value, advance,
+    // corrections) had no effect on the displayed outstanding balance.
+    // balance_adjustment is stored as -amount (per adjust_agent_balance),
+    // so we negate it back: -(-user_input) = +user_input.
+    // Positive adjustment = agent owes more. Negative = agent owes less.
+    let outstanding_balance = total_stock_value_sent - total_stock_value_returned - total_cash_received + total_adjustments;
 
     let current_stock_value = if current_stock_units > 0 {
         let total_qty_sent_minus_returned: i64 = conn.query_row(

@@ -659,10 +659,13 @@ export default function Catalog() {
     const matchColor = !colorSearch || (p.color || '').toLowerCase().includes(colorSearch.toLowerCase())
     // v0.30.0: View mode filter
     // v0.31.0 BUGFIX: Filter by actual stock count, not profit_status field.
-    // Bhai's report: sold-out items still showing in 'active' view because
-    // profit_status field was stale (not updated for old sales). Use
-    // canonical stock check: qty_in_head_office + qty_with_agents = 0 → sold out.
-    const currentStock = (p.qty_in_head_office ?? p.stock_quantity ?? 0) + (p.qty_with_agents ?? 0)
+    // v0.32.0 BUGFIX: Remove fallback to stock_quantity — it's NOT decremented
+    // by agent stock movements (send_stock_to_agent, return_stock_from_agent),
+    // so it can be stale (positive) even when all stock is gone. qty_in_head_office
+    // IS decremented by all stock movements, so it's the canonical HO stock field.
+    // qty_with_agents tracks stock currently held by agents.
+    // Total sellable stock = qty_in_head_office + qty_with_agents.
+    const currentStock = (p.qty_in_head_office ?? 0) + (p.qty_with_agents ?? 0)
     const isSoldOut = currentStock === 0
     const matchView = viewMode === 'all' ? true :
       viewMode === 'active' ? !isSoldOut :
