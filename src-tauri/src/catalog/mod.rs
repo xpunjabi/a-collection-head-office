@@ -24,8 +24,16 @@ pub struct Product {
     pub status: String,
     pub images: String,
     pub supplier_id: Option<i64>,
-    pub created_at: String,
-    pub updated_at: String,
+    // v0.28.0: created_at + updated_at are now Optional (same pattern as
+    // Customer.created_at in v0.26.1). Frontend add_product flow does not
+    // send these fields (server generates them via chrono::Utc::now() inside
+    // add_product/update_product). Required String caused "missing field
+    // 'created_at'" deserialization error on add_product. None values from
+    // frontend are simply ignored at INSERT time (server uses its own `now`).
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
     // v0.11.0+ profit-mode fields (optional — old rows may not have them)
     #[serde(default)]
     pub product_code: Option<String>,
@@ -85,8 +93,8 @@ pub fn get_all_products(conn: &Connection) -> Result<Vec<Product>, rusqlite::Err
             status: row.get(13)?,
             images: row.get(14)?,
             supplier_id: row.get(15)?,
-            created_at: row.get(16)?,
-            updated_at: row.get(17)?,
+            created_at: Some(row.get(16)?),
+            updated_at: Some(row.get(17)?),
             product_code: row.get(18)?,
             brand: row.get(19)?,
             fabric: row.get(20)?,
@@ -136,8 +144,8 @@ pub fn get_product_by_id(conn: &Connection, id: i64) -> Result<Product, rusqlite
                 status: row.get(13)?,
                 images: row.get(14)?,
                 supplier_id: row.get(15)?,
-                created_at: row.get(16)?,
-                updated_at: row.get(17)?,
+                created_at: Some(row.get(16)?),
+                updated_at: Some(row.get(17)?),
                 product_code: row.get(18)?,
                 brand: row.get(19)?,
                 fabric: row.get(20)?,
