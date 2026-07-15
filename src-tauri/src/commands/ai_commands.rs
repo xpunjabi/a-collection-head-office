@@ -233,8 +233,8 @@ pub async fn save_product_draft_to_catalog(state: State<'_, DbState>, draft: ai:
             .map(|i| serde_json::to_string(&i).unwrap_or_else(|_| "[]".to_string()))
             .unwrap_or_else(|| "[]".to_string()),
         supplier_id: None,
-        created_at: now.clone(),
-        updated_at: now,
+        created_at: Some(now.clone()),
+        updated_at: Some(now.clone()),
         // v0.11.0+ profit-mode fields — default to None/empty for manually
         // created drafts. These get populated when a purchase trip item is
         // linked or when stock is sent to an agent.
@@ -363,8 +363,8 @@ pub async fn save_catalog_draft(state: State<'_, DbState>, draft: crate::ai::cat
         status: "active".to_string(),
         images: images_json,
         supplier_id: None,
-        created_at: now.clone(),
-        updated_at: now,
+        created_at: Some(now.clone()),
+        updated_at: Some(now.clone()),
         product_code: None,
         brand: draft.brand.clone(),
         fabric: draft.fabric.clone(),
