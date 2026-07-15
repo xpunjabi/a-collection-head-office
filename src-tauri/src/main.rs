@@ -87,6 +87,10 @@ fn main() {
             commands::agents_commands::report_agent_sale,
             commands::agents_commands::receive_agent_cash,
             commands::agents_commands::adjust_agent_balance,
+            // v0.29.0 — Agent manual ledger entries (maal value + advance + edit/delete)
+            commands::agents_commands::add_agent_manual_entry,
+            commands::agents_commands::update_agent_ledger_entry,
+            commands::agents_commands::delete_agent_ledger_entry,
             // v0.11.1 — Share Center
             commands::share_segments_commands::log_share,
             commands::share_segments_commands::get_share_logs,
@@ -107,6 +111,10 @@ fn main() {
             // v0.26.0 — Customer Udhar/Credit (खाता)
             commands::udhar_commands::record_customer_payment,
             commands::udhar_commands::get_customer_balance_history,
+            // v0.29.0 — Customer manual ledger entries (opening balance + adjustments)
+            commands::udhar_commands::add_customer_ledger_entry,
+            commands::udhar_commands::update_customer_ledger_entry,
+            commands::udhar_commands::delete_customer_ledger_entry,
             // v0.15.0 — Public Catalog Publishing
             commands::catalog_publish_commands::preview_catalog_publish,
             commands::catalog_publish_commands::publish_catalog_to_github,

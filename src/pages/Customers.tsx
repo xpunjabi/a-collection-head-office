@@ -11,7 +11,10 @@ import {
   Trash2,
   X,
   Wallet,
-  Banknote
+  Banknote,
+  BookOpen,
+  Sliders,
+  Pencil,
 } from 'lucide-react'
 import { fmtMoney } from '../utils/format'
 
@@ -55,6 +58,21 @@ export default function Customers() {
   const [paymentNotes, setPaymentNotes] = useState('')
   const [balanceHistory, setBalanceHistory] = useState<any[]>([])
   const [showBalanceHistory, setShowBalanceHistory] = useState(false)
+
+  // v0.29.0: Manual ledger entry modal state (opening_debit + adjustment)
+  // Single modal handles both — type controlled by ledgerEntryType
+  const [showLedgerEntryModal, setShowLedgerEntryModal] = useState(false)
+  const [ledgerEntryType, setLedgerEntryType] = useState<'opening_debit' | 'adjustment'>('opening_debit')
+  const [ledgerEntryAmount, setLedgerEntryAmount] = useState(0)
+  const [ledgerEntryNotes, setLedgerEntryNotes] = useState('')
+  const [ledgerEntryDate, setLedgerEntryDate] = useState('')
+
+  // v0.29.0: Edit existing entry modal
+  const [showEditEntryModal, setShowEditEntryModal] = useState(false)
+  const [editEntry, setEditEntry] = useState<any | null>(null)
+  const [editEntryAmount, setEditEntryAmount] = useState(0)
+  const [editEntryNotes, setEditEntryNotes] = useState('')
+  const [editEntryDate, setEditEntryDate] = useState('')
 
   useEffect(() => {
     fetchCustomers()
@@ -165,6 +183,114 @@ export default function Customers() {
       setBalanceHistory(history)
       setPaymentCustomer(customer)
       setShowBalanceHistory(true)
+    } catch (err) {
+      alert(`Error: ${err}`)
+    }
+  }
+
+  // v0.29.0: Open modal for adding a manual ledger entry (opening_debit or adjustment)
+  const handleOpenLedgerEntryModal = (customer: Customer, type: 'opening_debit' | 'adjustment') => {
+    setPaymentCustomer(customer)
+    setLedgerEntryType(type)
+    setLedgerEntryAmount(0)
+    setLedgerEntryNotes('')
+    // Default date = today (YYYY-MM-DD for <input type="date">)
+    setLedgerEntryDate(new Date().toISOString().split('T')[0])
+    setShowLedgerEntryModal(true)
+  }
+
+  // v0.29.0: Save the manual ledger entry
+  const handleSaveLedgerEntry = async () => {
+    if (!paymentCustomer?.id) return
+    if (ledgerEntryType === 'opening_debit' && ledgerEntryAmount <= 0) {
+      alert('Opening debit amount must be positive.')
+      return
+    }
+    if (ledgerEntryType === 'adjustment' && ledgerEntryAmount === 0) {
+      alert('Adjustment amount cannot be zero.')
+      return
+    }
+    try {
+      // Convert date to ISO 8601 (with time)
+      const isoDate = ledgerEntryDate
+        ? new Date(ledgerEntryDate + 'T12:00:00').toISOString()
+        : null
+      await invoke('add_customer_ledger_entry', {
+        customerId: paymentCustomer.id,
+        entryType: ledgerEntryType,
+        amount: ledgerEntryAmount,
+        entryDate: isoDate,
+        notes: ledgerEntryNotes || null,
+      })
+      setShowLedgerEntryModal(false)
+      await fetchCustomers()
+      alert(`${ledgerEntryType === 'opening_debit' ? 'Opening balance' : 'Adjustment'} added for ${paymentCustomer.name}`)
+    } catch (err) {
+      alert(`Error: ${err}`)
+    }
+  }
+
+  // v0.29.0: Open modal for editing an existing ledger entry
+  const handleOpenEditEntry = (entry: any) => {
+    setEditEntry(entry)
+    setEditEntryAmount(entry.amount)
+    setEditEntryNotes('')
+    // Parse the entry's date for the date input
+    try {
+      const d = new Date(entry.date)
+      setEditEntryDate(d.toISOString().split('T')[0])
+    } catch {
+      setEditEntryDate(new Date().toISOString().split('T')[0])
+    }
+    setShowEditEntryModal(true)
+  }
+
+  // v0.29.0: Save edits to an existing ledger entry
+  const handleSaveEditEntry = async () => {
+    if (!editEntry) return
+    if (editEntry.entry_type === 'opening_debit' && editEntryAmount <= 0) {
+      alert('Opening debit amount must be positive.')
+      return
+    }
+    if (editEntry.entry_type === 'adjustment' && editEntryAmount === 0) {
+      alert('Adjustment amount cannot be zero.')
+      return
+    }
+    try {
+      const isoDate = editEntryDate
+        ? new Date(editEntryDate + 'T12:00:00').toISOString()
+        : null
+      await invoke('update_customer_ledger_entry', {
+        entryId: editEntry.id,
+        amount: editEntryAmount,
+        notes: editEntryNotes || null,
+        entryDate: isoDate,
+      })
+      setShowEditEntryModal(false)
+      // Refresh balance history + customer list
+      if (paymentCustomer?.id) {
+        const history = await invoke<any[]>('get_customer_balance_history', { customerId: paymentCustomer.id })
+        setBalanceHistory(history)
+      }
+      await fetchCustomers()
+      alert('Entry updated.')
+    } catch (err) {
+      alert(`Error: ${err}`)
+    }
+  }
+
+  // v0.29.0: Delete a ledger entry (only opening_debit + adjustment + payment)
+  const handleDeleteLedgerEntry = async (entryId: number) => {
+    if (!confirm('Delete this entry? Customer balance will be recalculated.')) return
+    try {
+      await invoke('delete_customer_ledger_entry', { entryId })
+      // Refresh balance history + customer list
+      if (paymentCustomer?.id) {
+        const history = await invoke<any[]>('get_customer_balance_history', { customerId: paymentCustomer.id })
+        setBalanceHistory(history)
+      }
+      await fetchCustomers()
+      alert('Entry deleted.')
     } catch (err) {
       alert(`Error: ${err}`)
     }
@@ -303,6 +429,35 @@ export default function Customers() {
                         >
                           <Wallet size={14} />
                         </button>
+                      </>
+                    )}
+                    {/* v0.29.0: Manual ledger entry buttons — always visible */}
+                    {c.id && (
+                      <>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleOpenLedgerEntryModal(c, 'opening_debit'); }}
+                          className="text-amber-400 hover:text-amber-300 transition-colors p-1"
+                          title="Add Opening Balance (purana udhar)"
+                        >
+                          <BookOpen size={14} />
+                        </button>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleOpenLedgerEntryModal(c, 'adjustment'); }}
+                          className="text-violet-400 hover:text-violet-300 transition-colors p-1"
+                          title="Add Adjustment (discount/correction)"
+                        >
+                          <Sliders size={14} />
+                        </button>
+                        {/* History button — always visible (even if balance=0) */}
+                        {(c.outstanding_balance || 0) === 0 && (
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); handleShowBalanceHistory(c); }}
+                            className="text-blue-400 hover:text-blue-300 transition-colors p-1"
+                            title="View Khata History"
+                          >
+                            <Wallet size={14} />
+                          </button>
+                        )}
                       </>
                     )}
                     <button 
@@ -635,7 +790,7 @@ export default function Customers() {
         </div>
       )}
 
-      {/* v0.26.0: Balance History (Khata) Modal */}
+      {/* v0.26.0: Balance History (Khata) Modal — v0.29.0 enhanced with edit/delete + new entry types */}
       {showBalanceHistory && paymentCustomer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-slate-900 border border-gray-800 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden shadow-2xl flex flex-col">
@@ -650,30 +805,192 @@ export default function Customers() {
               {balanceHistory.length === 0 ? (
                 <p className="text-sm text-gray-500 text-center py-8">No transactions yet.</p>
               ) : (
-                balanceHistory.map((entry, i) => (
-                  <div key={i} className={`flex items-start gap-3 p-3 rounded-lg border ${
-                    entry.entry_type === 'sale' 
-                      ? 'bg-slate-950/50 border-gray-800' 
-                      : 'bg-emerald-950/30 border-emerald-800/50'
-                  }`}>
-                    <div className={`mt-1 w-2 h-2 rounded-full ${entry.entry_type === 'sale' ? 'bg-amber-400' : 'bg-emerald-400'}`}></div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-200">{entry.description}</p>
-                      <p className="text-[10px] text-gray-500">{new Date(entry.date).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                balanceHistory.map((entry, i) => {
+                  // v0.29.0: Color code by entry type
+                  const isDebit = entry.amount > 0  // sale, opening_debit, +adjustment
+                  const isManualEntry = entry.entry_type === 'opening_debit' || entry.entry_type === 'adjustment' || entry.entry_type === 'payment'
+                  return (
+                    <div key={i} className={`flex items-start gap-3 p-3 rounded-lg border ${
+                      entry.entry_type === 'sale' ? 'bg-slate-950/50 border-gray-800' :
+                      entry.entry_type === 'payment' ? 'bg-emerald-950/30 border-emerald-800/50' :
+                      entry.entry_type === 'opening_debit' ? 'bg-amber-950/30 border-amber-800/50' :
+                      entry.entry_type === 'adjustment' ? 'bg-violet-950/30 border-violet-800/50' :
+                      'bg-slate-950/50 border-gray-800'
+                    }`}>
+                      <div className={`mt-1 w-2 h-2 rounded-full ${
+                        entry.entry_type === 'sale' ? 'bg-amber-400' :
+                        entry.entry_type === 'payment' ? 'bg-emerald-400' :
+                        entry.entry_type === 'opening_debit' ? 'bg-amber-500' :
+                        entry.entry_type === 'adjustment' ? 'bg-violet-400' :
+                        'bg-gray-400'
+                      }`}></div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-gray-200">{entry.description}</p>
+                        <p className="text-[10px] text-gray-500">{new Date(entry.date).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                      </div>
+                      <div className="text-right shrink-0 flex items-start gap-2">
+                        <div>
+                          <p className={`text-sm font-bold ${isDebit ? 'text-amber-400' : 'text-emerald-400'}`}>
+                            {isDebit ? '+' : ''}{fmtMoney(Math.abs(entry.amount))}
+                          </p>
+                          <p className="text-[10px] text-gray-500">Bal: {fmtMoney(entry.balance_after)}</p>
+                        </div>
+                        {/* v0.29.0: Edit + Delete buttons (only for manual entries — not sales) */}
+                        {isManualEntry && (
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => handleOpenEditEntry(entry)}
+                              className="text-gray-500 hover:text-blue-400 transition-colors"
+                              title="Edit entry"
+                            >
+                              <Pencil size={12} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteLedgerEntry(entry.id)}
+                              className="text-gray-500 hover:text-red-400 transition-colors"
+                              title="Delete entry"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      <p className={`text-sm font-bold ${entry.amount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                        {entry.amount > 0 ? '+' : ''}{fmtMoney(Math.abs(entry.amount))}
-                      </p>
-                      <p className="text-[10px] text-gray-500">Bal: {fmtMoney(entry.balance_after)}</p>
-                    </div>
-                  </div>
-                ))
+                  )
+                })
               )}
             </div>
             <div className="p-4 border-t border-gray-800 bg-slate-950/40 flex justify-between items-center">
               <span className="text-sm text-gray-400">Current Outstanding:</span>
               <span className="text-lg font-bold text-amber-400">{fmtMoney(paymentCustomer.outstanding_balance || 0)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v0.29.0: Manual Ledger Entry Modal (opening_debit + adjustment) */}
+      {showLedgerEntryModal && paymentCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-gray-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-slate-950/40">
+              <h3 className="text-lg font-bold text-white">
+                {ledgerEntryType === 'opening_debit' ? 'Add Opening Balance' : 'Add Adjustment'}
+              </h3>
+              <button onClick={() => setShowLedgerEntryModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3">
+                <p className="text-sm text-gray-400">Customer</p>
+                <p className="text-base font-semibold text-white">{paymentCustomer.name}</p>
+                <p className="text-xs text-gray-500">{paymentCustomer.phone || 'No phone'}</p>
+              </div>
+              <div className="bg-amber-900/20 border border-amber-700/50 rounded-lg p-3 flex justify-between items-center">
+                <span className="text-sm text-amber-300">Current Outstanding</span>
+                <span className="text-lg font-bold text-amber-400">{fmtMoney(paymentCustomer.outstanding_balance || 0)}</span>
+              </div>
+              {ledgerEntryType === 'opening_debit' && (
+                <p className="text-xs text-gray-400 bg-slate-950/50 border border-gray-800 rounded p-2">
+                  Use this to record old/purana udhar that wasn't tracked before. Increases customer's outstanding balance.
+                </p>
+              )}
+              {ledgerEntryType === 'adjustment' && (
+                <p className="text-xs text-gray-400 bg-slate-950/50 border border-gray-800 rounded p-2">
+                  Use this for corrections. Positive amount = customer owes more. Negative amount = customer owes less (discount/write-off).
+                </p>
+              )}
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">
+                  Amount {ledgerEntryType === 'adjustment' && '(use minus for discount)'}
+                </label>
+                <input
+                  type="number"
+                  step={0.01}
+                  value={ledgerEntryAmount}
+                  onChange={e => setLedgerEntryAmount(Number(e.target.value))}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+                <p className="text-[10px] text-gray-600 mt-1">
+                  New balance: <span className="text-gray-400">{fmtMoney((paymentCustomer.outstanding_balance || 0) + ledgerEntryAmount)}</span>
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={ledgerEntryDate}
+                  onChange={e => setLedgerEntryDate(e.target.value)}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Notes (optional)</label>
+                <input
+                  type="text"
+                  value={ledgerEntryNotes}
+                  onChange={e => setLedgerEntryNotes(e.target.value)}
+                  placeholder={ledgerEntryType === 'opening_debit' ? 'e.g. Purana udhar from before app' : 'e.g. Discount, error correction...'}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setShowLedgerEntryModal(false)} className="flex-1 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg text-sm">Cancel</button>
+                <button onClick={handleSaveLedgerEntry} className="flex-1 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium">Save Entry</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v0.29.0: Edit Entry Modal */}
+      {showEditEntryModal && editEntry && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-gray-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-slate-950/40">
+              <h3 className="text-lg font-bold text-white">Edit Entry</h3>
+              <button onClick={() => setShowEditEntryModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Type</p>
+                <p className="text-sm font-semibold capitalize text-white">{editEntry.entry_type.replace('_', ' ')}</p>
+                <p className="text-xs text-gray-500 mt-2">Current Description</p>
+                <p className="text-sm text-gray-300">{editEntry.description}</p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">
+                  Amount {editEntry.entry_type === 'adjustment' && '(use minus for discount)'}
+                </label>
+                <input
+                  type="number"
+                  step={0.01}
+                  value={editEntryAmount}
+                  onChange={e => setEditEntryAmount(Number(e.target.value))}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={editEntryDate}
+                  onChange={e => setEditEntryDate(e.target.value)}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Notes (leave blank to keep existing)</label>
+                <input
+                  type="text"
+                  value={editEntryNotes}
+                  onChange={e => setEditEntryNotes(e.target.value)}
+                  placeholder="New notes (optional)"
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setShowEditEntryModal(false)} className="flex-1 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg text-sm">Cancel</button>
+                <button onClick={handleSaveEditEntry} className="flex-1 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium">Update Entry</button>
+              </div>
             </div>
           </div>
         </div>

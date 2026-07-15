@@ -4,7 +4,8 @@ import { useAppStore, AgentSummary, AgentLedgerEntry } from '../stores/store'
 import { fmtMoney } from '../utils/format'
 import {
   Plus, X, User, Package, Trash2,
-  ArrowDownToLine, ArrowUpFromLine, Banknote, Scale, History
+  ArrowDownToLine, ArrowUpFromLine, Banknote, Scale, History,
+  BookOpen, Pencil
 } from 'lucide-react'
 
 export default function AgentsPage() {
@@ -31,6 +32,17 @@ export default function AgentsPage() {
   const [actionAmount, setActionAmount] = useState(0)
   const [actionNotes, setActionNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
+
+  // v0.29.0: Manual ledger entry modal (maal value + advance + corrections)
+  const [showManualEntryModal, setShowManualEntryModal] = useState(false)
+  const [manualEntryAmount, setManualEntryAmount] = useState(0)
+  const [manualEntryNotes, setManualEntryNotes] = useState('')
+  const [manualEntryDate, setManualEntryDate] = useState('')
+  // Edit existing entry
+  const [showEditEntryModal, setShowEditEntryModal] = useState(false)
+  const [editEntry, setEditEntry] = useState<AgentLedgerEntry | null>(null)
+  const [editEntryAmount, setEditEntryAmount] = useState(0)
+  const [editEntryNotes, setEditEntryNotes] = useState('')
 
   useEffect(() => {
     fetchProducts()
@@ -192,6 +204,95 @@ export default function AgentsPage() {
     }
   }
 
+  // v0.29.0: Open manual entry modal
+  const openManualEntry = () => {
+    setManualEntryAmount(0)
+    setManualEntryNotes('')
+    setManualEntryDate(new Date().toISOString().split('T')[0])
+    setShowManualEntryModal(true)
+  }
+
+  // v0.29.0: Save manual ledger entry (maal value / advance / correction)
+  const handleSaveManualEntry = async () => {
+    if (!selectedAgent?.agent.id) return
+    if (manualEntryAmount === 0) {
+      alert('Amount cannot be zero. Use + for maal value/agent owes more, - for advance/agent owes less.')
+      return
+    }
+    if (!manualEntryNotes.trim()) {
+      alert('Notes are mandatory. Explain what this entry is for (e.g., "Maal value without catalog link", "Advance payment").')
+      return
+    }
+    try {
+      const isoDate = manualEntryDate
+        ? new Date(manualEntryDate + 'T12:00:00').toISOString()
+        : null
+      await invoke('add_agent_manual_entry', {
+        agentId: selectedAgent.agent.id,
+        amount: manualEntryAmount,
+        notes: manualEntryNotes,
+        entryDate: isoDate,
+      })
+      setShowManualEntryModal(false)
+      await loadAgents()
+      const updated = (await invoke('get_agents') as AgentSummary[]).find(a => a.agent.id === selectedAgent.agent.id)
+      if (updated) await loadAgentDetail(updated)
+      alert('Manual entry added.')
+    } catch (err) {
+      alert(`Error: ${err}`)
+    }
+  }
+
+  // v0.29.0: Open edit modal for a balance_adjustment entry
+  const openEditEntry = (entry: AgentLedgerEntry) => {
+    setEditEntry(entry)
+    // Stored amount is -amount (negative of user input), so flip sign back for display
+    setEditEntryAmount(-entry.amount)
+    setEditEntryNotes(entry.notes || '')
+    setShowEditEntryModal(true)
+  }
+
+  // v0.29.0: Save edits to an existing ledger entry
+  const handleSaveEditEntry = async () => {
+    if (!editEntry) return
+    if (editEntryAmount === 0) {
+      alert('Amount cannot be zero.')
+      return
+    }
+    if (!editEntryNotes.trim()) {
+      alert('Notes are mandatory.')
+      return
+    }
+    try {
+      await invoke('update_agent_ledger_entry', {
+        entryId: editEntry.id,
+        amount: editEntryAmount,
+        notes: editEntryNotes,
+      })
+      setShowEditEntryModal(false)
+      await loadAgents()
+      const updated = (await invoke('get_agents') as AgentSummary[]).find(a => a.agent.id === selectedAgent?.agent.id)
+      if (updated) await loadAgentDetail(updated)
+      alert('Entry updated.')
+    } catch (err) {
+      alert(`Error: ${err}`)
+    }
+  }
+
+  // v0.29.0: Delete a balance_adjustment entry
+  const handleDeleteEntry = async (entryId: number) => {
+    if (!confirm('Delete this entry? Agent balance will be recalculated.')) return
+    try {
+      await invoke('delete_agent_ledger_entry', { entryId })
+      await loadAgents()
+      const updated = (await invoke('get_agents') as AgentSummary[]).find(a => a.agent.id === selectedAgent?.agent.id)
+      if (updated) await loadAgentDetail(updated)
+      alert('Entry deleted.')
+    } catch (err) {
+      alert(`Error: ${err}`)
+    }
+  }
+
   // ---- Helper render functions ----
   // v0.25.3: fmtMoney moved to shared util (src/utils/format.ts)
   const fmtDate = (iso?: string | null) => iso ? new Date(iso).toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
@@ -304,6 +405,10 @@ export default function AgentsPage() {
                   <button onClick={() => openAction('adjust')} className="flex items-center space-x-1 px-3 py-2 bg-amber-600/10 hover:bg-amber-600/20 text-amber-400 border border-amber-500/20 rounded-lg text-xs font-medium">
                     <Scale size={12} /><span>Adjust Balance</span>
                   </button>
+                  {/* v0.29.0: Manual entry button — maal value/advance/correction */}
+                  <button onClick={() => openManualEntry()} className="flex items-center space-x-1 px-3 py-2 bg-orange-600/10 hover:bg-orange-600/20 text-orange-400 border border-orange-500/20 rounded-lg text-xs font-medium">
+                    <BookOpen size={12} /><span>Manual Entry</span>
+                  </button>
                 </div>
               </div>
 
@@ -321,11 +426,13 @@ export default function AgentsPage() {
                         <th className="text-right py-2 px-2">Qty</th>
                         <th className="text-right py-2 px-2">Amount</th>
                         <th className="text-left py-2 px-2">Notes</th>
+                        {/* v0.29.0: Actions column for balance_adjustment entries */}
+                        <th className="text-right py-2 px-2">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-800">
                       {ledger.length === 0 ? (
-                        <tr><td colSpan={5} className="py-6 text-center text-gray-500">No ledger entries yet.</td></tr>
+                        <tr><td colSpan={6} className="py-6 text-center text-gray-500">No ledger entries yet.</td></tr>
                       ) : ledger.map(e => (
                         <tr key={e.id} className="text-gray-300">
                           <td className="py-2 px-2 text-gray-500">{fmtDate(e.entry_date)}</td>
@@ -341,6 +448,27 @@ export default function AgentsPage() {
                           <td className="py-2 px-2 text-right">{e.qty > 0 ? e.qty : '—'}</td>
                           <td className="py-2 px-2 text-right">{e.amount !== 0 ? fmtMoney(e.amount) : '—'}</td>
                           <td className="py-2 px-2 text-gray-500 max-w-[200px] truncate">{e.notes || '—'}</td>
+                          <td className="py-2 px-2 text-right">
+                            {/* v0.29.0: Edit/Delete only for balance_adjustment entries */}
+                            {e.entry_type === 'balance_adjustment' && (
+                              <div className="flex gap-1 justify-end">
+                                <button
+                                  onClick={() => openEditEntry(e)}
+                                  className="text-gray-500 hover:text-blue-400 transition-colors"
+                                  title="Edit entry"
+                                >
+                                  <Pencil size={11} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteEntry(e.id as number)}
+                                  className="text-gray-500 hover:text-red-400 transition-colors"
+                                  title="Delete entry"
+                                >
+                                  <Trash2 size={11} />
+                                </button>
+                              </div>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -486,6 +614,113 @@ export default function AgentsPage() {
                   className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium disabled:opacity-50">
                   {actionLoading ? 'Saving...' : 'Confirm'}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v0.29.0: Manual Ledger Entry Modal */}
+      {showManualEntryModal && selectedAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-gray-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-slate-950/40">
+              <h3 className="text-lg font-bold text-white">Manual Ledger Entry</h3>
+              <button onClick={() => setShowManualEntryModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3">
+                <p className="text-sm text-gray-400">Agent</p>
+                <p className="text-base font-semibold text-white">{selectedAgent.agent.name}</p>
+                <p className="text-xs text-gray-500">{selectedAgent.agent.phone || 'No phone'}</p>
+              </div>
+              <div className="bg-amber-900/20 border border-amber-700/50 rounded-lg p-3 flex justify-between items-center">
+                <span className="text-sm text-amber-300">Current Outstanding</span>
+                <span className="text-lg font-bold text-amber-400">{fmtMoney(selectedAgent.outstanding_balance)}</span>
+              </div>
+              <p className="text-xs text-gray-400 bg-slate-950/50 border border-gray-800 rounded p-2">
+                Use this for entries when:
+                <br />• Maal bheja but product catalog mein nahi hai (amount = maal value)
+                <br />• Cash advance diya agent ko (amount = -advance)
+                <br />• Any other correction
+                <br /><br />
+                Positive amount = agent owes more. Negative amount = agent owes less.
+              </p>
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Amount * (use minus for advance/discount)</label>
+                <input
+                  type="number"
+                  step={0.01}
+                  value={manualEntryAmount}
+                  onChange={e => setManualEntryAmount(Number(e.target.value))}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={manualEntryDate}
+                  onChange={e => setManualEntryDate(e.target.value)}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Notes * (mandatory)</label>
+                <textarea
+                  value={manualEntryNotes}
+                  onChange={e => setManualEntryNotes(e.target.value)}
+                  rows={2}
+                  placeholder="Explain what this entry is for (e.g., 'Maal value: 3 suits sent without catalog link')"
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setShowManualEntryModal(false)} className="flex-1 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg text-sm">Cancel</button>
+                <button onClick={handleSaveManualEntry} className="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium">Save Entry</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v0.29.0: Edit Entry Modal */}
+      {showEditEntryModal && editEntry && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-gray-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-slate-950/40">
+              <h3 className="text-lg font-bold text-white">Edit Ledger Entry</h3>
+              <button onClick={() => setShowEditEntryModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Type</p>
+                <p className="text-sm font-semibold capitalize text-white">{editEntry.entry_type.replace('_', ' ')}</p>
+                <p className="text-xs text-gray-500 mt-2">Date</p>
+                <p className="text-sm text-gray-300">{fmtDate(editEntry.entry_date)}</p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Amount * (use minus for advance/discount)</label>
+                <input
+                  type="number"
+                  step={0.01}
+                  value={editEntryAmount}
+                  onChange={e => setEditEntryAmount(Number(e.target.value))}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Notes * (mandatory)</label>
+                <textarea
+                  value={editEntryNotes}
+                  onChange={e => setEditEntryNotes(e.target.value)}
+                  rows={2}
+                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setShowEditEntryModal(false)} className="flex-1 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg text-sm">Cancel</button>
+                <button onClick={handleSaveEditEntry} className="flex-1 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-medium">Update Entry</button>
               </div>
             </div>
           </div>

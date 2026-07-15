@@ -100,6 +100,7 @@ pub use agents_commands::{
     get_agent_ledger, get_product_agent_stock,
     send_stock_to_agent, return_stock_from_agent,
     report_agent_sale, receive_agent_cash, adjust_agent_balance,
+    add_agent_manual_entry, update_agent_ledger_entry, delete_agent_ledger_entry,
 };
 pub use share_segments_commands::{
     log_share, get_share_logs,
@@ -111,7 +112,10 @@ pub use purchase_trips_commands::{
     update_purchase_trip, delete_purchase_trip, add_trip_item, remove_trip_item,
 };
 pub use sales_commands::record_sale;
-pub use udhar_commands::{record_customer_payment, get_customer_balance_history};
+pub use udhar_commands::{
+    record_customer_payment, get_customer_balance_history,
+    add_customer_ledger_entry, update_customer_ledger_entry, delete_customer_ledger_entry,
+};
 pub use catalog_publish_commands::{
     preview_catalog_publish, publish_catalog_to_github, get_catalog_publish_history,
 };

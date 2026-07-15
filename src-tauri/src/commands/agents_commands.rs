@@ -251,3 +251,158 @@ pub async fn adjust_agent_balance(
     agents::adjust_agent_balance(&conn, agent_id, amount, &notes)
         .map_err(|e| e.to_string())
 }
+
+// ============================================================
+// v0.29.0: MANUAL AGENT LEDGER ENTRIES + EDIT/DELETE
+// ============================================================
+//
+// Bhai ki need: "abhi sirf 'receive cash' entry kar sakte hain. Maal
+// bheja entry chaahiye (even if maal catalog mein nahi hai). Kitna advance
+// tha, kitne ka maal chala gaya — direct amount entry ka save/edit/delete."
+//
+// Solution: Expose 3 thin wrapper commands around existing functions in
+// agents/mod.rs:
+//   - add_agent_manual_entry: creates a balance_adjustment entry with
+//     arbitrary amount + notes. Used for:
+//       * Maal value (jo catalog mein nahi) — amount = maal ki qeemat
+//       * Advance payment (cash given to agent) — amount = -advance
+//       * Any other correction
+//   - update_agent_ledger_entry: thin wrapper around agents::update_ledger_entry
+//   - delete_agent_ledger_entry: thin wrapper around agents::delete_ledger_entry
+//     + recalculates product stock if entry was stock-related.
+//
+// Existing receive_agent_cash + adjust_agent_balance are kept for backward
+// compatibility. New UI uses add_agent_manual_entry for flexibility.
+
+/// Add a manual ledger entry for an agent. Useful when:
+/// - Maal bheja but catalog mein product nahi hai (amount = maal value)
+/// - Cash advance diya agent ko (amount = -advance, reduces agent's debt to HO)
+/// - Any other correction
+///
+/// Uses entry_type='balance_adjustment' under the hood (existing schema).
+/// Notes are mandatory for audit trail.
+#[tauri::command]
+pub async fn add_agent_manual_entry(
+    state: State<'_, DbState>,
+    agent_id: i64,
+    amount: f64,
+    notes: String,
+    entry_date: Option<String>,
+) -> Result<i64, String> {
+    if notes.trim().is_empty() {
+        return Err("Notes are mandatory for manual ledger entries.".to_string());
+    }
+    if amount == 0.0 {
+        return Err("Amount cannot be zero.".to_string());
+    }
+    let conn = state.0.lock().await;
+
+    // Validate agent exists
+    let _: i64 = conn.query_row(
+        "SELECT id FROM agents WHERE id = ?1",
+        rusqlite::params![agent_id],
+        |r| r.get(0),
+    ).map_err(|e| format!("Agent not found: {}", e))?;
+
+    // Use existing append_ledger_entry with entry_type='balance_adjustment'.
+    // The function stores -amount (because adjust_agent_balance uses this
+    // convention: positive input = agent owes more, stored as negative).
+    // We replicate that here for consistency.
+    let stored_amount = -amount;
+    let entry_id = if let Some(date) = entry_date {
+        // Custom date — use direct INSERT to override entry_date
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO agent_ledger_entries (agent_id, product_id, entry_type, qty, unit_price, amount, reference_code, notes, entry_date, created_at, updated_at)
+             VALUES (?1, NULL, 'balance_adjustment', 0, 0.0, ?2, '', ?3, ?4, ?5, ?5)",
+            rusqlite::params![agent_id, stored_amount, &notes, &date, &now],
+        ).map_err(|e| format!("Failed to insert entry: {}", e))?;
+        conn.last_insert_rowid()
+    } else {
+        agents::append_ledger_entry(
+            &conn, agent_id, None, "balance_adjustment", 0, 0.0, stored_amount,
+            None, Some(&notes),
+        ).map_err(|e| format!("Failed to insert entry: {}", e))?
+    };
+
+    Ok(entry_id)
+}
+
+/// Update an existing agent ledger entry's amount + notes.
+/// Only balance_adjustment entries should be edited this way. Stock entries
+/// (stock_sent/stock_returned/sale_reported) have product linkage that
+/// requires recalculation — caller is responsible for calling
+/// recalc_product_stock_from_ledger if needed.
+///
+/// For balance_adjustment entries, amount is stored as -amount (negative of
+/// user's input) — same convention as adjust_agent_balance.
+#[tauri::command]
+pub async fn update_agent_ledger_entry(
+    state: State<'_, DbState>,
+    entry_id: i64,
+    amount: f64,
+    notes: String,
+) -> Result<(), String> {
+    if notes.trim().is_empty() {
+        return Err("Notes are mandatory.".to_string());
+    }
+    if amount == 0.0 {
+        return Err("Amount cannot be zero.".to_string());
+    }
+    let conn = state.0.lock().await;
+
+    // Fetch existing entry to validate it's a balance_adjustment
+    let entry_type: String = conn.query_row(
+        "SELECT entry_type FROM agent_ledger_entries WHERE id = ?1",
+        rusqlite::params![entry_id],
+        |r| r.get(0),
+    ).map_err(|e| format!("Entry not found: {}", e))?;
+
+    if entry_type != "balance_adjustment" {
+        return Err(format!(
+            "Cannot edit entry of type '{}'. Only balance_adjustment entries can be edited.",
+            entry_type
+        ));
+    }
+
+    // Stored amount is -amount (negative of user input, per adjust_agent_balance convention)
+    let stored_amount = -amount;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE agent_ledger_entries SET amount = ?1, notes = ?2, updated_at = ?3 WHERE id = ?4",
+        rusqlite::params![stored_amount, &notes, &now, entry_id],
+    ).map_err(|e| format!("Failed to update entry: {}", e))?;
+
+    Ok(())
+}
+
+/// Delete an agent ledger entry. Only balance_adjustment entries can be
+/// deleted safely. Stock entries (stock_sent/stock_returned/sale_reported)
+/// require product stock recalculation — caller should use delete_ledger_entry
+/// directly (in agents/mod.rs) + recalc_product_stock_from_ledger if needed.
+#[tauri::command]
+pub async fn delete_agent_ledger_entry(
+    state: State<'_, DbState>,
+    entry_id: i64,
+) -> Result<(), String> {
+    let conn = state.0.lock().await;
+
+    // Fetch entry to validate it's a balance_adjustment
+    let entry_type: String = conn.query_row(
+        "SELECT entry_type FROM agent_ledger_entries WHERE id = ?1",
+        rusqlite::params![entry_id],
+        |r| r.get(0),
+    ).map_err(|e| format!("Entry not found: {}", e))?;
+
+    if entry_type != "balance_adjustment" {
+        return Err(format!(
+            "Cannot delete entry of type '{}'. Only balance_adjustment entries can be deleted.",
+            entry_type
+        ));
+    }
+
+    agents::delete_ledger_entry(&conn, entry_id)
+        .map_err(|e| format!("Failed to delete entry: {}", e))?;
+
+    Ok(())
+}

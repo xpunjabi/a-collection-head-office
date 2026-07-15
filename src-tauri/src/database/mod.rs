@@ -412,6 +412,17 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
         [],
     )?;
 
+    // v0.29.0: Add entry_type column to customer_payments.
+    // Existing rows default to 'payment' (backward compatible).
+    // New entry types:
+    //   - 'payment'        (existing) customer paid against outstanding balance
+    //   - 'opening_debit'  (new) legacy/old udhar added manually when onboarding
+    //                       a customer whose previous balance wasn't tracked
+    //   - 'adjustment'     (new) arbitrary correction (+/-). Positive amount
+    //                       increases customer's outstanding_balance (they owe
+    //                       more); negative decreases (discount/write-off).
+    add_col_if_missing(conn, "customer_payments", "entry_type", "TEXT NOT NULL DEFAULT 'payment'")?;
+
     // v0.14.4: Add performance indexes.
     // agent_ledger_entries is queried heavily by get_agent_summary,
     // return_stock_from_agent, record_sale (all do SUM(CASE WHEN entry_type=...)

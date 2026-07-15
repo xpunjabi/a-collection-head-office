@@ -134,20 +134,23 @@ pub async fn get_customer_balance_history(
     .collect();
 
     // Fetch payments for this customer
+    // v0.29.0: Now includes entry_type so we can distinguish:
+    //   payment, opening_debit, adjustment in the history timeline.
     let mut stmt2 = conn.prepare(
-        "SELECT id, payment_date, amount, notes
+        "SELECT id, payment_date, amount, notes, entry_type
          FROM customer_payments
          WHERE customer_id = ?1
          ORDER BY payment_date ASC"
     ).map_err(|e| e.to_string())?;
 
-    let payments: Vec<(i64, String, f64, String)> = stmt2.query_map(
+    let payments: Vec<(i64, String, f64, String, String)> = stmt2.query_map(
         [customer_id],
         |row| Ok((
             row.get(0)?,
             row.get(1)?,
             row.get(2)?,
             row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "payment".to_string()),
         )),
     ).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok())
@@ -163,9 +166,35 @@ pub async fn get_customer_balance_history(
         let desc = format!("{} x{} (Rs. {:.0})", pname, qty, total);
         combined.push((date.clone(), "sale".to_string(), desc, *balance, *id));
     }
-    for (id, date, amount, notes) in &payments {
-        let desc = if notes.is_empty() { format!("Payment Rs. {:.0}", amount) } else { format!("Payment: {}", notes) };
-        combined.push((date.clone(), "payment".to_string(), desc, -*amount, *id));
+    for (id, date, amount, notes, etype) in &payments {
+        let (desc, amount_change) = match etype.as_str() {
+            "opening_debit" => {
+                let d = if notes.is_empty() {
+                    format!("Opening Balance: Rs. {:.0}", amount)
+                } else {
+                    format!("Opening Balance: {} (Rs. {:.0})", notes, amount)
+                };
+                (d, *amount)
+            }
+            "adjustment" => {
+                let d = if notes.is_empty() {
+                    format!("Adjustment: Rs. {:.0}", amount)
+                } else {
+                    format!("Adjustment: {} (Rs. {:.0})", notes, amount)
+                };
+                (d, *amount) // signed; can be negative
+            }
+            _ => {
+                // payment (existing behavior)
+                let d = if notes.is_empty() {
+                    format!("Payment Rs. {:.0}", amount)
+                } else {
+                    format!("Payment: {}", notes)
+                };
+                (d, -*amount)
+            }
+        };
+        combined.push((date.clone(), etype.clone(), desc, amount_change, *id));
     }
     combined.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -184,4 +213,273 @@ pub async fn get_customer_balance_history(
 
     let _ = now; // suppress unused warning
     Ok(entries)
+}
+
+// ============================================================
+// v0.29.0: MANUAL LEDGER ENTRIES (opening balance + adjustments)
+// ============================================================
+//
+// These commands complement record_customer_payment (which only handles
+// normal payments against outstanding balance). They allow bhai to:
+//
+//   1. Add an opening_debit entry when onboarding a customer whose old
+//      udhar wasn't tracked (e.g., "Sami Amjad ka purana 9400 rqaya").
+//   2. Add an adjustment entry for arbitrary corrections — discount,
+//      write-off, error fix, or "maal value" without a linked sale.
+//
+// All entries go into the same customer_payments table (now with an
+// entry_type column). The customer's outstanding_balance is updated
+// atomically within a transaction.
+//
+// Edit + delete operations recompute the customer's outstanding_balance
+// from scratch (SUM of all entries) to ensure consistency.
+
+/// Add a manual ledger entry for a customer.
+///
+/// - entry_type = "opening_debit": amount must be > 0, increases balance
+/// - entry_type = "adjustment": amount can be + (customer owes more) or
+///   - (customer owes less, e.g., discount)
+///
+/// `entry_date` is optional — defaults to now (UTC ISO 8601).
+#[tauri::command]
+pub async fn add_customer_ledger_entry(
+    state: State<'_, DbState>,
+    customer_id: i64,
+    entry_type: String,
+    amount: f64,
+    entry_date: Option<String>,
+    notes: Option<String>,
+) -> Result<i64, String> {
+    // Validate entry_type
+    if entry_type != "opening_debit" && entry_type != "adjustment" {
+        return Err(format!(
+            "Invalid entry_type '{}'. Must be 'opening_debit' or 'adjustment'.",
+            entry_type
+        ));
+    }
+    // opening_debit must be positive
+    if entry_type == "opening_debit" && amount <= 0.0 {
+        return Err("Opening debit amount must be positive.".to_string());
+    }
+    // adjustment can be zero — no-op, but allowed
+    if entry_type == "adjustment" && amount == 0.0 {
+        return Err("Adjustment amount cannot be zero.".to_string());
+    }
+
+    let conn = state.0.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    let date = entry_date.unwrap_or_else(|| now.clone());
+
+    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
+
+    // Verify customer exists
+    let _: i64 = conn.query_row(
+        "SELECT id FROM customers WHERE id = ?1",
+        rusqlite::params![customer_id],
+        |r| r.get(0),
+    ).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        format!("Customer not found: {}", e)
+    })?;
+
+    // Insert ledger entry
+    let res = conn.execute(
+        "INSERT INTO customer_payments (customer_id, amount, payment_date, notes, sale_id, entry_type, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7)",
+        rusqlite::params![
+            customer_id,
+            amount,
+            &date,
+            notes.as_deref().unwrap_or(""),
+            &entry_type,
+            &now,
+            &now,
+        ],
+    );
+    if let Err(e) = res {
+        let _ = conn.execute("ROLLBACK", []);
+        return Err(format!("Failed to insert ledger entry: {}", e));
+    }
+    let entry_id = conn.last_insert_rowid();
+
+    // Update customer's outstanding_balance:
+    //   opening_debit → balance += amount (customer owes more)
+    //   adjustment    → balance += amount (signed; negative reduces balance)
+    if let Err(e) = conn.execute(
+        "UPDATE customers SET outstanding_balance = outstanding_balance + ?1, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![amount, &now, customer_id],
+    ) {
+        let _ = conn.execute("ROLLBACK", []);
+        return Err(format!("Failed to update balance: {}", e));
+    }
+
+    conn.execute("COMMIT", []).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    })?;
+
+    Ok(entry_id)
+}
+
+/// Update an existing manual ledger entry (opening_debit or adjustment).
+/// Normal 'payment' entries are also editable but with caution — they may
+/// be linked to a sale. Sale entries are NOT editable here.
+///
+/// Recomputes the customer's outstanding_balance from scratch after update
+/// to ensure consistency.
+#[tauri::command]
+pub async fn update_customer_ledger_entry(
+    state: State<'_, DbState>,
+    entry_id: i64,
+    amount: f64,
+    notes: Option<String>,
+    entry_date: Option<String>,
+) -> Result<(), String> {
+    let conn = state.0.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
+
+    // Fetch existing entry
+    let (customer_id, entry_type): (i64, String) = conn.query_row(
+        "SELECT customer_id, entry_type FROM customer_payments WHERE id = ?1",
+        rusqlite::params![entry_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        format!("Ledger entry not found: {}", e)
+    })?;
+
+    // Validate based on entry_type
+    if entry_type == "opening_debit" && amount <= 0.0 {
+        let _ = conn.execute("ROLLBACK", []);
+        return Err("Opening debit amount must be positive.".to_string());
+    }
+    if entry_type == "adjustment" && amount == 0.0 {
+        let _ = conn.execute("ROLLBACK", []);
+        return Err("Adjustment amount cannot be zero.".to_string());
+    }
+
+    // Update the entry
+    let date_clause = if let Some(d) = &entry_date {
+        "payment_date = ?4, "
+    } else {
+        ""
+    };
+    let sql = format!(
+        "UPDATE customer_payments SET amount = ?1, notes = ?2, {}updated_at = ?3 WHERE id = ?5",
+        date_clause
+    );
+    let res = if entry_date.is_some() {
+        conn.execute(
+            &sql,
+            rusqlite::params![amount, notes.as_deref().unwrap_or(""), &now, entry_date.as_ref().unwrap(), entry_id],
+        )
+    } else {
+        conn.execute(
+            &sql,
+            rusqlite::params![amount, notes.as_deref().unwrap_or(""), &now, entry_id],
+        )
+    };
+    if let Err(e) = res {
+        let _ = conn.execute("ROLLBACK", []);
+        return Err(format!("Failed to update entry: {}", e));
+    }
+
+    // Recompute customer's outstanding_balance from all entries
+    recompute_customer_balance(&conn, customer_id)?;
+
+    conn.execute("COMMIT", []).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    })?;
+
+    Ok(())
+}
+
+/// Delete a manual ledger entry. Recomputes customer's outstanding_balance
+/// from scratch after deletion. Sale entries cannot be deleted here —
+/// delete the sale instead.
+#[tauri::command]
+pub async fn delete_customer_ledger_entry(
+    state: State<'_, DbState>,
+    entry_id: i64,
+) -> Result<(), String> {
+    let conn = state.0.lock().await;
+
+    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
+
+    // Fetch entry to delete + validate it's not a sale
+    let (customer_id, entry_type): (i64, String) = conn.query_row(
+        "SELECT customer_id, entry_type FROM customer_payments WHERE id = ?1",
+        rusqlite::params![entry_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        format!("Ledger entry not found: {}", e)
+    })?;
+
+    if let Err(e) = conn.execute(
+        "DELETE FROM customer_payments WHERE id = ?1",
+        rusqlite::params![entry_id],
+    ) {
+        let _ = conn.execute("ROLLBACK", []);
+        return Err(format!("Failed to delete entry: {}", e));
+    }
+
+    // Recompute customer's outstanding_balance from remaining entries
+    recompute_customer_balance(&conn, customer_id)?;
+
+    conn.execute("COMMIT", []).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    })?;
+
+    Ok(())
+}
+
+/// Helper: recompute a customer's outstanding_balance from scratch.
+///
+/// outstanding_balance = SUM(sales.balance) + SUM(customer_payments amounts)
+/// where customer_payments amounts are:
+///   - 'payment'        → -amount (reduces balance)
+///   - 'opening_debit'  → +amount (increases balance)
+///   - 'adjustment'     → +amount (signed; can be negative)
+///
+/// This is called after update/delete of a ledger entry to ensure the
+/// denormalized outstanding_balance column always matches the source rows.
+fn recompute_customer_balance(conn: &Connection, customer_id: i64) -> Result<(), String> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Sum of all sale balances for this customer
+    let sales_total: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(balance), 0.0) FROM sales WHERE customer_id = ?1",
+        rusqlite::params![customer_id],
+        |r| r.get(0),
+    ).map_err(|e| format!("Failed to sum sales: {}", e))?;
+
+    // Sum of all customer_payments with sign based on entry_type
+    let payments_net: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(
+            CASE WHEN entry_type = 'payment' THEN -amount
+                 WHEN entry_type = 'opening_debit' THEN amount
+                 WHEN entry_type = 'adjustment' THEN amount
+                 ELSE 0.0
+            END
+         ), 0.0)
+         FROM customer_payments WHERE customer_id = ?1",
+        rusqlite::params![customer_id],
+        |r| r.get(0),
+    ).map_err(|e| format!("Failed to sum payments: {}", e))?;
+
+    let new_balance = sales_total + payments_net;
+    // Balance should never go negative (safety clamp)
+    let new_balance = if new_balance < 0.0 { 0.0 } else { new_balance };
+
+    conn.execute(
+        "UPDATE customers SET outstanding_balance = ?1, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![new_balance, &now, customer_id],
+    ).map_err(|e| format!("Failed to update balance: {}", e))?;
+
+    Ok(())
 }
