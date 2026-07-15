@@ -380,9 +380,10 @@ pub async fn undo_sale(
     }
 
     // Mark sale as reversed (soft delete — keep row for audit)
+    let undone_tag = format!(" [UNDONE {}]", now);
     if let Err(e) = conn.execute(
-        "UPDATE sales SET reversed = 1, notes = COALESCE(notes, '') || ' [UNDONE " + &now + "]', updated_at = ?1 WHERE id = ?2",
-        rusqlite::params![&now, sale_id],
+        "UPDATE sales SET reversed = 1, notes = COALESCE(notes, '') || ?3, updated_at = ?1 WHERE id = ?2",
+        rusqlite::params![&now, sale_id, &undone_tag],
     ) {
         let _ = conn.execute("ROLLBACK", []);
         return Err(format!("Failed to mark sale as reversed: {}", e));
