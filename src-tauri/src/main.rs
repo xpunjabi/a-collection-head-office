@@ -48,6 +48,8 @@ fn main() {
             commands::products_commands::save_image_from_url,
             commands::products_commands::save_image_for_share,
             commands::products_commands::save_drafts_to_folder_with_path,
+            // v0.33.0 — Manual sold-out marking
+            commands::products_commands::mark_product_sold_out,
             commands::backup_commands::list_backups,
             commands::backup_commands::restore_backup,
             commands::backup_commands::import_from_catalog_json,

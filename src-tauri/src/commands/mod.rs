@@ -75,6 +75,7 @@ pub use products_commands::{
     export_products_csv, import_products_csv, upload_product_image,
     get_image_as_base64, save_base64_image, save_image_from_url,
     save_image_for_share, save_drafts_to_folder_with_path,
+    mark_product_sold_out,
 };
 pub use inventory_commands::{
     get_inventory_summary, get_low_stock, get_dead_stock, get_best_sellers, adjust_stock,

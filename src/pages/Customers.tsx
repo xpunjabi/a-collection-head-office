@@ -357,14 +357,14 @@ export default function Customers() {
         </button>
       </div>
 
-      {/* v0.26.0: Udhar Summary Bar */}
+      {/* v0.26.0: Udhar Summary Bar — v0.33.0: color-coded (green=HO ko lena) */}
       {totalOutstanding > 0 && (
-        <div className="glass-card p-4 mb-4 flex items-center justify-between bg-amber-900/10 border-amber-700/30">
+        <div className="glass-card p-4 mb-4 flex items-center justify-between bg-emerald-900/10 border-emerald-700/30">
           <div className="flex items-center gap-3">
-            <Wallet className="text-amber-400" size={24} />
+            <Wallet className="text-emerald-400" size={24} />
             <div>
-              <p className="text-sm text-gray-400">Total Outstanding (Udhar)</p>
-              <p className="text-2xl font-bold text-amber-400">{fmtMoney(totalOutstanding)}</p>
+              <p className="text-sm text-emerald-300">HO ko lena hai (Udhar)</p>
+              <p className="text-3xl font-bold text-emerald-400">{fmtMoney(totalOutstanding)}</p>
             </div>
           </div>
           <div className="text-right">
@@ -405,7 +405,7 @@ export default function Customers() {
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-white">{c.name}</p>
                       {(c.outstanding_balance || 0) > 0 && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 border border-amber-700/50 font-bold whitespace-nowrap">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/50 text-emerald-300 border border-emerald-700/50 font-bold whitespace-nowrap">
                           Udhar: {fmtMoney(c.outstanding_balance || 0)}
                         </span>
                       )}

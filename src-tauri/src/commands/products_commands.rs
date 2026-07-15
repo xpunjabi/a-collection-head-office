@@ -350,3 +350,33 @@ pub async fn save_drafts_to_folder_with_path(
 
     Ok(subfolder_path.to_string_lossy().to_string())
 }
+
+// ============================================================
+// v0.33.0: MANUAL SOLD-OUT MARKING
+// ============================================================
+//
+// Bhai ki need: auto-detection of sold-out items unreliable hai (stock fields
+// inconsistent for old data). Manual override button add kiya — bhai khud
+// decide karega kaunsa item sold out hai.
+//
+// mark_product_sold_out: sets profit_status='sold_out' WITHOUT touching
+// stock fields. Bhai can still see original stock values for audit.
+// reactivate_sold_product (v0.30.0): sets profit_status='in_head_office'
+// and restores qty_in_head_office.
+
+/// Mark a product as sold out (manual override).
+/// Sets profit_status='sold_out'. Stock fields untouched (kept for audit).
+/// Bhai uses this when auto-detection fails (data inconsistency).
+#[tauri::command]
+pub async fn mark_product_sold_out(
+    state: State<'_, DbState>,
+    product_id: i64,
+) -> Result<(), String> {
+    let conn = state.0.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE products SET profit_status = 'sold_out', updated_at = ?1 WHERE id = ?2",
+        rusqlite::params![&now, product_id],
+    ).map_err(|e| format!("Failed to mark as sold out: {}", e))?;
+    Ok(())
+}

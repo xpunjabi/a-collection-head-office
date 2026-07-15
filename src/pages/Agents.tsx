@@ -33,11 +33,10 @@ export default function AgentsPage() {
   const [actionNotes, setActionNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
 
-  // v0.29.0: Manual ledger entry modal (maal value + advance + corrections)
+  // v0.29.0: Return Cash modal state — v0.33.0: simplified (removed date field)
   const [showManualEntryModal, setShowManualEntryModal] = useState(false)
   const [manualEntryAmount, setManualEntryAmount] = useState(0)
   const [manualEntryNotes, setManualEntryNotes] = useState('')
-  const [manualEntryDate, setManualEntryDate] = useState('')
   // Edit existing entry
   const [showEditEntryModal, setShowEditEntryModal] = useState(false)
   const [editEntry, setEditEntry] = useState<AgentLedgerEntry | null>(null)
@@ -204,40 +203,34 @@ export default function AgentsPage() {
     }
   }
 
-  // v0.29.0: Open manual entry modal
+  // v0.33.0: Open Return Cash modal (simplified)
   const openManualEntry = () => {
     setManualEntryAmount(0)
     setManualEntryNotes('')
-    setManualEntryDate(new Date().toISOString().split('T')[0])
     setShowManualEntryModal(true)
   }
 
   // v0.29.0: Save manual ledger entry (maal value / advance / correction)
+  // v0.33.0: Simplified Return Cash — just amount (positive) + notes (optional).
+  // Always INCREASES outstanding (HO gives cash to agent = agent owes more).
   const handleSaveManualEntry = async () => {
     if (!selectedAgent?.agent.id) return
-    if (manualEntryAmount === 0) {
-      alert('Amount cannot be zero. Use + for maal value/agent owes more, - for advance/agent owes less.')
-      return
-    }
-    if (!manualEntryNotes.trim()) {
-      alert('Notes are mandatory. Explain what this entry is for (e.g., "Maal value without catalog link", "Advance payment").')
+    if (manualEntryAmount <= 0) {
+      alert('Amount must be positive.')
       return
     }
     try {
-      const isoDate = manualEntryDate
-        ? new Date(manualEntryDate + 'T12:00:00').toISOString()
-        : null
       await invoke('add_agent_manual_entry', {
         agentId: selectedAgent.agent.id,
         amount: manualEntryAmount,
-        notes: manualEntryNotes,
-        entryDate: isoDate,
+        notes: manualEntryNotes.trim() || 'Return Cash',
+        entryDate: null,
       })
       setShowManualEntryModal(false)
       await loadAgents()
       const updated = (await invoke('get_agents') as AgentSummary[]).find(a => a.agent.id === selectedAgent.agent.id)
       if (updated) await loadAgentDetail(updated)
-      alert('Return Cash entry added.')
+      alert(`Return Cash: Rs. ${manualEntryAmount.toFixed(0)} given to ${selectedAgent.agent.name}. Outstanding increased.`)
     } catch (err) {
       alert(`Error: ${err}`)
     }
@@ -343,8 +336,14 @@ export default function AgentsPage() {
                     <p className="text-[11px] text-gray-500">{a.agent.city || 'No city'} • {a.agent.agent_code}</p>
                   </div>
                 </div>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${a.outstanding_balance > 0 ? 'bg-amber-900/40 text-amber-300' : 'bg-emerald-900/40 text-emerald-300'}`}>
-                  {a.outstanding_balance > 0 ? `Owes ${fmtMoney(a.outstanding_balance)}` : 'Settled'}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                  a.outstanding_balance > 0 ? 'bg-emerald-900/40 text-emerald-300'
+                  : a.outstanding_balance < 0 ? 'bg-red-900/40 text-red-300'
+                  : 'bg-gray-800 text-gray-400'
+                }`}>
+                  {a.outstanding_balance > 0 ? `HO ko lena: ${fmtMoney(a.outstanding_balance)}`
+                  : a.outstanding_balance < 0 ? `HO ko dena: ${fmtMoney(Math.abs(a.outstanding_balance))}`
+                  : 'Settled'}
                 </span>
               </div>
               <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]">
@@ -358,7 +357,11 @@ export default function AgentsPage() {
                 </div>
                 <div className="bg-slate-950/50 rounded p-1.5">
                   <div className="text-gray-500">Outstanding</div>
-                  <div className={a.outstanding_balance > 0 ? 'text-amber-400 font-semibold' : 'text-emerald-400 font-semibold'}>{fmtMoney(a.outstanding_balance)}</div>
+                  <div className={`text-lg font-bold ${
+                    a.outstanding_balance > 0 ? 'text-emerald-400'
+                    : a.outstanding_balance < 0 ? 'text-red-400'
+                    : 'text-gray-400'
+                  }`}>{fmtMoney(Math.abs(a.outstanding_balance))}</div>
                 </div>
               </div>
             </button>
@@ -479,9 +482,13 @@ export default function AgentsPage() {
                               </td>
                               <td className="py-2 px-2 text-right">{e.qty > 0 ? e.qty : '—'}</td>
                               <td className="py-2 px-2 text-right">{e.amount !== 0 ? fmtMoney(e.amount) : '—'}</td>
-                              {/* v0.31.0: Running balance display */}
-                              <td className="py-2 px-2 text-right font-semibold text-amber-400">
-                                {fmtMoney(balances.get(e.id as number) || 0)}
+                              {/* v0.31.0: Running balance display — v0.33.0: color-coded */}
+                              <td className={`py-2 px-2 text-right font-bold ${
+                                (balances.get(e.id as number) || 0) > 0 ? 'text-emerald-400'
+                                : (balances.get(e.id as number) || 0) < 0 ? 'text-red-400'
+                                : 'text-gray-400'
+                              }`}>
+                                {fmtMoney(Math.abs(balances.get(e.id as number) || 0))}
                               </td>
                               <td className="py-2 px-2 text-gray-500 max-w-[200px] truncate">{e.notes || '—'}</td>
                               <td className="py-2 px-2 text-right">
@@ -640,7 +647,11 @@ export default function AgentsPage() {
               </div>
               {selectedAgent && (actionModal === 'cash' || actionModal === 'adjust') && (
                 <div className="bg-slate-950/50 border border-gray-800 rounded-lg p-3 text-xs text-gray-400">
-                  Current outstanding balance: <span className={selectedAgent.outstanding_balance > 0 ? 'text-amber-400 font-semibold' : 'text-emerald-400 font-semibold'}>{fmtMoney(selectedAgent.outstanding_balance)}</span>
+                  Current outstanding: <span className={`font-bold ${
+                    selectedAgent.outstanding_balance > 0 ? 'text-emerald-400'
+                    : selectedAgent.outstanding_balance < 0 ? 'text-red-400'
+                    : 'text-gray-400'
+                  }`}>{selectedAgent.outstanding_balance >= 0 ? 'HO ko lena ' : 'HO ko dena '}{fmtMoney(Math.abs(selectedAgent.outstanding_balance))}</span>
                 </div>
               )}
               <div className="flex justify-end space-x-2 pt-3 border-t border-gray-800">
@@ -656,12 +667,12 @@ export default function AgentsPage() {
         </div>
       )}
 
-      {/* v0.29.0: Return Cash Modal (renamed from Manual Entry in v0.32.0) */}
+      {/* v0.33.0: Simplified Return Cash Modal — like Receive Cash */}
       {showManualEntryModal && selectedAgent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-slate-900 border border-gray-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
             <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-slate-950/40">
-              <h3 className="text-lg font-bold text-white">Return Cash</h3>
+              <h3 className="text-lg font-bold text-white">Return Cash to {selectedAgent.agent.name}</h3>
               <button onClick={() => setShowManualEntryModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
             </div>
             <div className="p-5 space-y-3">
@@ -670,50 +681,45 @@ export default function AgentsPage() {
                 <p className="text-base font-semibold text-white">{selectedAgent.agent.name}</p>
                 <p className="text-xs text-gray-500">{selectedAgent.agent.phone || 'No phone'}</p>
               </div>
-              <div className="bg-amber-900/20 border border-amber-700/50 rounded-lg p-3 flex justify-between items-center">
-                <span className="text-sm text-amber-300">Current Outstanding</span>
-                <span className="text-lg font-bold text-amber-400">{fmtMoney(selectedAgent.outstanding_balance)}</span>
+              <div className={`rounded-lg p-3 flex justify-between items-center border ${
+                selectedAgent.outstanding_balance >= 0
+                  ? 'bg-emerald-900/20 border-emerald-700/50'
+                  : 'bg-red-900/20 border-red-700/50'
+              }`}>
+                <span className={`text-sm ${selectedAgent.outstanding_balance >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
+                  {selectedAgent.outstanding_balance >= 0 ? 'Agent owes HO' : 'HO owes Agent'}
+                </span>
+                <span className={`text-2xl font-bold ${selectedAgent.outstanding_balance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {fmtMoney(Math.abs(selectedAgent.outstanding_balance))}
+                </span>
               </div>
               <p className="text-xs text-gray-400 bg-slate-950/50 border border-gray-800 rounded p-2">
-                Use this for entries when:
-                <br />• Maal bheja but product catalog mein nahi hai (amount = maal value)
-                <br />• Cash advance diya agent ko (amount = -advance)
-                <br />• Any other correction
-                <br /><br />
-                Positive amount = agent owes more. Negative amount = agent owes less.
+                Return Cash = HO gives cash TO agent. Agent's outstanding will INCREASE (agent owes more).
               </p>
               <div>
-                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Amount * (use minus for advance/discount)</label>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Amount (Rs.) *</label>
                 <input
                   type="number"
+                  min={0}
                   step={0.01}
                   value={manualEntryAmount}
-                  onChange={e => setManualEntryAmount(Number(e.target.value))}
+                  onChange={e => setManualEntryAmount(Math.max(0, Number(e.target.value)))}
                   className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Date</label>
+                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Notes (optional)</label>
                 <input
-                  type="date"
-                  value={manualEntryDate}
-                  onChange={e => setManualEntryDate(e.target.value)}
-                  className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase text-gray-400 mb-1">Notes * (mandatory)</label>
-                <textarea
+                  type="text"
                   value={manualEntryNotes}
                   onChange={e => setManualEntryNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Explain what this entry is for (e.g., 'Maal value: 3 suits sent without catalog link')"
+                  placeholder="e.g. Advance payment, refund..."
                   className="w-full bg-slate-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500"
                 />
               </div>
               <div className="flex gap-2 pt-2">
                 <button onClick={() => setShowManualEntryModal(false)} className="flex-1 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-gray-200 rounded-lg text-sm">Cancel</button>
-                <button onClick={handleSaveManualEntry} className="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium">Save Entry</button>
+                <button onClick={handleSaveManualEntry} className="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium">Save</button>
               </div>
             </div>
           </div>

@@ -6,7 +6,7 @@ import {
   Search, Download, Upload, Plus, Edit, Trash2, Image as ImageIcon,
   X, Palette, MapPin, Share2, ChevronDown, CheckSquare, Square,
   MessageCircle, Facebook, Instagram, Twitter, ShoppingCart, Globe, Link2,
-  RotateCcw
+  RotateCcw, EyeOff
 } from 'lucide-react'
 import ProductImage from '../components/ProductImage'
 import {
@@ -195,6 +195,19 @@ export default function Catalog() {
       await invoke('reactivate_sold_product', { productId: product.id, restockQty: qty })
       await fetchProducts()
       alert(`Reactivated: ${product.name}. Status is now "in_head_office" with ${qty} unit(s).`)
+    } catch (err) {
+      alert(`Error: ${err}`)
+    }
+  }
+
+  // v0.33.0: Manually mark a product as sold out (override auto-detection)
+  const handleMarkSoldOut = async (product: Product) => {
+    if (!product.id) return
+    if (!confirm(`Mark "${product.name}" as SOLD OUT?\n\nThis will hide it from the Active view and exclude it from catalog publishing.\n\nYou can reactivate it later from the "Sold Out" view.`)) return
+    try {
+      await invoke('mark_product_sold_out', { productId: product.id })
+      await fetchProducts()
+      alert(`Marked as sold out: ${product.name}`)
     } catch (err) {
       alert(`Error: ${err}`)
     }
@@ -658,15 +671,11 @@ export default function Catalog() {
     const matchCat = !selectedCategory || p.category === selectedCategory
     const matchColor = !colorSearch || (p.color || '').toLowerCase().includes(colorSearch.toLowerCase())
     // v0.30.0: View mode filter
-    // v0.31.0 BUGFIX: Filter by actual stock count, not profit_status field.
-    // v0.32.0 BUGFIX: Remove fallback to stock_quantity — it's NOT decremented
-    // by agent stock movements (send_stock_to_agent, return_stock_from_agent),
-    // so it can be stale (positive) even when all stock is gone. qty_in_head_office
-    // IS decremented by all stock movements, so it's the canonical HO stock field.
-    // qty_with_agents tracks stock currently held by agents.
-    // Total sellable stock = qty_in_head_office + qty_with_agents.
+    // v0.33.0: Combined approach — manual override (profit_status) OR auto-detection (stock=0).
+    // Bhai can manually mark items as sold out via the "Mark Sold Out" button.
+    // Auto-detection catches items where stock fields are properly tracked.
     const currentStock = (p.qty_in_head_office ?? 0) + (p.qty_with_agents ?? 0)
-    const isSoldOut = currentStock === 0
+    const isSoldOut = p.profit_status === 'sold_out' || currentStock === 0
     const matchView = viewMode === 'all' ? true :
       viewMode === 'active' ? !isSoldOut :
       viewMode === 'sold_out' ? isSoldOut : true
@@ -947,6 +956,16 @@ export default function Catalog() {
                           title="Reactivate (mark back in stock)"
                         >
                           <RotateCcw size={14} />
+                        </button>
+                      )}
+                      {/* v0.33.0: Mark as Sold Out — shown for NON-sold-out items (manual override) */}
+                      {p.profit_status !== 'sold_out' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleMarkSoldOut(p); }}
+                          className="p-1 hover:text-red-400 transition-colors"
+                          title="Mark as Sold Out (hide from Active + catalog)"
+                        >
+                          <EyeOff size={14} />
                         </button>
                       )}
                     </div>
