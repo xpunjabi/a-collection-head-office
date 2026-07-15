@@ -126,6 +126,11 @@ pub fn build_catalog_json(
     let public_products: Vec<PublicProduct> = products
         .into_iter()
         .filter(|p| p.status == "active")  // Only publish active products
+        // v0.30.0: Exclude sold-out items from public catalog entirely.
+        // Bhai ki need: "jo suites/items sale ho jayein wo github page se hide ho jayein".
+        // Previously sold-out items appeared as "Sold Out" on the PWA — bhai
+        // wants them GONE from the public catalog (cleaner customer experience).
+        .filter(|p| p.profit_status.as_deref() != Some("sold_out"))
         .filter(|p| {
             // v0.16.3: Dedup by name (case-insensitive)
             let key = p.name.trim().to_lowercase();

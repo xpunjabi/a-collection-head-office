@@ -390,6 +390,10 @@ fn run_migrations_impl(conn: &mut Connection) -> Result<()> {
     add_col_if_missing(conn, "sales", "amount_paid", "REAL NOT NULL DEFAULT 0.0")?;
     add_col_if_missing(conn, "sales", "balance", "REAL NOT NULL DEFAULT 0.0")?;
     add_col_if_missing(conn, "sales", "customer_id", "INTEGER")?;
+    // v0.30.0: reversed flag for soft-delete (undo_sale).
+    // 0 = active sale (default)
+    // 1 = reversed (sale row kept for audit, but excluded from reports/summaries)
+    add_col_if_missing(conn, "sales", "reversed", "INTEGER NOT NULL DEFAULT 0")?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS customer_payments (

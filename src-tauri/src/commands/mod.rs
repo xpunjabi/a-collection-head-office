@@ -111,7 +111,7 @@ pub use purchase_trips_commands::{
     get_purchase_trips, get_purchase_trip, create_purchase_trip,
     update_purchase_trip, delete_purchase_trip, add_trip_item, remove_trip_item,
 };
-pub use sales_commands::record_sale;
+pub use sales_commands::{record_sale, undo_sale, reactivate_sold_product};
 pub use udhar_commands::{
     record_customer_payment, get_customer_balance_history,
     add_customer_ledger_entry, update_customer_ledger_entry, delete_customer_ledger_entry,

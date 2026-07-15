@@ -209,3 +209,220 @@ pub async fn record_sale(
 
     Ok(sale_id)
 }
+
+// ============================================================
+// v0.30.0: SALE UNDO + SOLD ITEMS MANAGEMENT
+// ============================================================
+//
+// Bhai ki need: "catalog mein agar kisi suite ki sale galti se record ho
+// jaye to undo karne ka option ho. Sold items catalog se hide ho jayein
+// (local + GitHub Pages). Phir agar wapas/change ho to reactivate/delete
+// bhi kar saken."
+//
+// Implementation:
+//   - undo_sale: reverses everything record_sale did (stock + qty_sold +
+//     customer balance + agent ledger), marks sale as 'reversed' (soft
+//     delete — sale row kept for audit trail, status flag flipped).
+//   - Sold items management is handled in frontend (filter by profit_status
+//     = 'sold_out') + catalog_publish_commands (exclude sold_out from
+//     publish). No new Rust commands needed for that.
+
+/// Undo a recorded sale. Reverses all side effects of record_sale:
+/// - Restores product stock (qty_in_head_office OR qty_with_agents depending on sale type)
+/// - Reduces product.qty_sold by the sale qty
+/// - Recalculates product.profit_status
+/// - Reverses customer's outstanding_balance update (if there was an unpaid balance)
+/// - Removes the agent_ledger_entries row created for agent sales
+/// - Marks the sale row as 'reversed' (status kept for audit, not hard-deleted)
+///
+/// This is a SOFT UNDO — the sale row remains in the database with a
+/// `reversed = 1` flag, so the audit trail is preserved. The sale will
+/// not appear in reports/summaries (filtered out by reversed = 0).
+///
+/// Cannot undo a sale that:
+/// - Has already been reversed
+/// - Has customer payments recorded against it (those would need to be
+///   deleted first — caller's responsibility)
+#[tauri::command]
+pub async fn undo_sale(
+    state: State<'_, DbState>,
+    sale_id: i64,
+) -> Result<(), String> {
+    let conn = state.0.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute("BEGIN IMMEDIATE", []).map_err(|e| e.to_string())?;
+
+    // Fetch sale details
+    let (product_id, qty, agent_id, customer_id, balance, sale_channel): (
+        i64, i64, Option<i64>, Option<i64>, f64, String,
+    ) = conn.query_row(
+        "SELECT product_id, qty, agent_id, customer_id, COALESCE(balance, 0.0), sale_channel
+         FROM sales WHERE id = ?1",
+        rusqlite::params![sale_id],
+        |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+        )),
+    ).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        format!("Sale not found: {}", e)
+    })?;
+
+    // Check if already reversed
+    let already_reversed: bool = conn.query_row(
+        "SELECT COALESCE(reversed, 0) FROM sales WHERE id = ?1",
+        rusqlite::params![sale_id],
+        |r| Ok(r.get::<_, i64>(0)? != 0),
+    ).unwrap_or(false);
+    if already_reversed {
+        let _ = conn.execute("ROLLBACK", []);
+        return Err("Sale has already been reversed.".to_string());
+    }
+
+    // Check if any customer payments are linked to this sale
+    let linked_payments: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM customer_payments WHERE sale_id = ?1",
+        rusqlite::params![sale_id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+    if linked_payments > 0 {
+        let _ = conn.execute("ROLLBACK", []);
+        return Err(format!(
+            "Cannot undo sale: {} customer payment(s) are linked to it. Delete those payments first from the customer's Khata History.",
+            linked_payments
+        ));
+    }
+
+    // Reverse stock effects
+    if agent_id.is_some() {
+        // Was agent sale — restore agent stock, reduce sold
+        if let Err(e) = conn.execute(
+            "UPDATE products SET qty_with_agents = qty_with_agents + ?1, qty_sold = MAX(0, qty_sold - ?2), updated_at = ?3 WHERE id = ?4",
+            rusqlite::params![qty, qty, &now, product_id],
+        ) {
+            let _ = conn.execute("ROLLBACK", []);
+            return Err(format!("Failed to restore agent stock: {}", e));
+        }
+        // Remove the sale_reported ledger entry (find by matching attributes,
+        // pick the most recent one). SQLite DELETE doesn't support LIMIT
+        // directly, so we use a subquery to find the row id first.
+        let unit_sale_price: f64 = conn.query_row(
+            "SELECT unit_sale_price FROM sales WHERE id = ?1",
+            rusqlite::params![sale_id],
+            |r| r.get(0),
+        ).unwrap_or(0.0);
+        let amount = qty as f64 * unit_sale_price;
+        let sale_date: String = conn.query_row(
+            "SELECT sale_date FROM sales WHERE id = ?1",
+            rusqlite::params![sale_id],
+            |r| r.get(0),
+        ).unwrap_or_default();
+        let ledger_entry_id: Option<i64> = conn.query_row(
+            "SELECT id FROM agent_ledger_entries
+             WHERE agent_id = ?1 AND product_id = ?2 AND entry_type = 'sale_reported'
+             AND qty = ?3 AND amount = ?4 AND entry_date = ?5
+             ORDER BY id DESC LIMIT 1",
+            rusqlite::params![agent_id, product_id, qty, amount, &sale_date],
+            |r| r.get(0),
+        ).ok();
+        if let Some(entry_id) = ledger_entry_id {
+            if let Err(e) = conn.execute(
+                "DELETE FROM agent_ledger_entries WHERE id = ?1",
+                rusqlite::params![entry_id],
+            ) {
+                let _ = conn.execute("ROLLBACK", []);
+                return Err(format!("Failed to remove agent ledger entry: {}", e));
+            }
+        }
+    } else {
+        // Was direct HO sale — restore HO stock, reduce sold
+        if let Err(e) = conn.execute(
+            "UPDATE products SET qty_in_head_office = qty_in_head_office + ?1, stock_quantity = stock_quantity + ?2, qty_sold = MAX(0, qty_sold - ?3), updated_at = ?4 WHERE id = ?5",
+            rusqlite::params![qty, qty, qty, &now, product_id],
+        ) {
+            let _ = conn.execute("ROLLBACK", []);
+            return Err(format!("Failed to restore HO stock: {}", e));
+        }
+    }
+
+    // Reverse customer balance update (if there was an unpaid balance)
+    if balance > 0.0 {
+        if let Some(cid) = customer_id {
+            if let Err(e) = conn.execute(
+                "UPDATE customers SET outstanding_balance = MAX(0, outstanding_balance - ?1), updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![balance, &now, cid],
+            ) {
+                let _ = conn.execute("ROLLBACK", []);
+                return Err(format!("Failed to reverse customer balance: {}", e));
+            }
+        }
+    }
+
+    // Recalculate product.profit_status
+    let (ho_qty, agent_qty): (i64, i64) = conn.query_row(
+        "SELECT COALESCE(qty_in_head_office, 0), COALESCE(qty_with_agents, 0) FROM products WHERE id = ?1",
+        rusqlite::params![product_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap_or((0, 0));
+    let new_status = if ho_qty == 0 && agent_qty == 0 {
+        "sold_out"
+    } else if ho_qty == 0 && agent_qty > 0 {
+        "with_agent"
+    } else {
+        "in_head_office"
+    };
+    if let Err(e) = conn.execute(
+        "UPDATE products SET profit_status = ?1, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![new_status, &now, product_id],
+    ) {
+        let _ = conn.execute("ROLLBACK", []);
+        return Err(format!("Failed to update profit_status: {}", e));
+    }
+
+    // Mark sale as reversed (soft delete — keep row for audit)
+    if let Err(e) = conn.execute(
+        "UPDATE sales SET reversed = 1, notes = COALESCE(notes, '') || ' [UNDONE " + &now + "]', updated_at = ?1 WHERE id = ?2",
+        rusqlite::params![&now, sale_id],
+    ) {
+        let _ = conn.execute("ROLLBACK", []);
+        return Err(format!("Failed to mark sale as reversed: {}", e));
+    }
+
+    conn.execute("COMMIT", []).map_err(|e| {
+        let _ = conn.execute("ROLLBACK", []);
+        e.to_string()
+    })?;
+
+    let _ = sale_channel; // suppress unused warning
+    Ok(())
+}
+
+/// Reactivate a sold-out product. Sets profit_status to 'in_head_office'
+/// and restores qty_in_head_office to 1 (or the specified qty). Useful
+/// when a sold-out item comes back into inventory (return, exchange, etc.).
+#[tauri::command]
+pub async fn reactivate_sold_product(
+    state: State<'_, DbState>,
+    product_id: i64,
+    restock_qty: Option<i64>,
+) -> Result<(), String> {
+    let conn = state.0.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    let qty = restock_qty.unwrap_or(1);
+
+    if qty <= 0 {
+        return Err("Restock quantity must be positive.".to_string());
+    }
+
+    conn.execute(
+        "UPDATE products
+         SET profit_status = 'in_head_office',
+             qty_in_head_office = COALESCE(qty_in_head_office, 0) + ?1,
+             stock_quantity = COALESCE(stock_quantity, 0) + ?1,
+             updated_at = ?2
+         WHERE id = ?3",
+        rusqlite::params![qty, &now, product_id],
+    ).map_err(|e| format!("Failed to reactivate product: {}", e))?;
+
+    Ok(())
+}

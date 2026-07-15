@@ -5,7 +5,8 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   Search, Download, Upload, Plus, Edit, Trash2, Image as ImageIcon,
   X, Palette, MapPin, Share2, ChevronDown, CheckSquare, Square,
-  MessageCircle, Facebook, Instagram, Twitter, ShoppingCart, Globe, Link2
+  MessageCircle, Facebook, Instagram, Twitter, ShoppingCart, Globe, Link2,
+  RotateCcw
 } from 'lucide-react'
 import ProductImage from '../components/ProductImage'
 import {
@@ -43,6 +44,8 @@ export default function Catalog() {
     exportProductsCsv, importProductsCsv, uploadProductImage } = useAppStore()
 
   const [searchTerm, setSearchTerm] = useState('')
+  // v0.30.0: View mode toggle — All | Active (hide sold-out) | Sold Out (manage)
+  const [viewMode, setViewMode] = useState<'all' | 'active' | 'sold_out'>('active')
   const [selectedCategory, setSelectedCategory] = useState('')
   const [colorSearch, setColorSearch] = useState('')
   const [showModal, setShowModal] = useState(false)
@@ -144,7 +147,7 @@ export default function Catalog() {
     setSaleSaving(true)
     try {
       const total = saleQty * saleUnitPrice
-      await invoke('record_sale', {
+      const saleId = await invoke<number>('record_sale', {
         productId: saleProduct.id,
         qty: saleQty,
         unitSalePrice: saleUnitPrice,
@@ -163,11 +166,37 @@ export default function Catalog() {
       const msg = balance > 0
         ? `Sale recorded! ${saleQty} x ${saleProduct.name} = Rs. ${total.toFixed(0)} (Paid: Rs. ${saleAmountPaid.toFixed(0)}, Balance: Rs. ${balance.toFixed(0)})`
         : `Sale recorded! ${saleQty} x ${saleProduct.name} = Rs. ${total.toFixed(0)} (Fully paid)`
-      alert(msg)
+      // v0.30.0: Offer undo option immediately after sale
+      if (confirm(`${msg}\n\n⚠️ Wrong sale? Click OK to UNDO it.`)) {
+        try {
+          await invoke('undo_sale', { saleId })
+          await fetchProducts()
+          alert('Sale undone! Stock restored.')
+        } catch (undoErr) {
+          alert(`Sale recorded but undo failed: ${undoErr}\n\nYou can manually adjust stock if needed.`)
+        }
+      }
     } catch (err) {
       alert(`Error: ${err}`)
     } finally {
       setSaleSaving(false)
+    }
+  }
+
+  // v0.30.0: Reactivate a sold-out product (restore to in_head_office + qty 1)
+  const handleReactivateProduct = async (product: Product) => {
+    if (!product.id) return
+    const qtyStr = prompt(`Reactivate "${product.name}"?\n\nEnter restock quantity (default 1):`, '1')
+    if (qtyStr === null) return  // user cancelled
+    const qty = parseInt(qtyStr) || 1
+    if (qty <= 0) { alert('Quantity must be positive.'); return }
+    if (!confirm(`Mark "${product.name}" as back in stock with ${qty} unit(s)?`)) return
+    try {
+      await invoke('reactivate_sold_product', { productId: product.id, restockQty: qty })
+      await fetchProducts()
+      alert(`Reactivated: ${product.name}. Status is now "in_head_office" with ${qty} unit(s).`)
+    } catch (err) {
+      alert(`Error: ${err}`)
     }
   }
 
@@ -628,7 +657,11 @@ export default function Catalog() {
     const matchSearch = !s || p.name.toLowerCase().includes(s) || p.sku.toLowerCase().includes(s) || (p.color || '').toLowerCase().includes(s)
     const matchCat = !selectedCategory || p.category === selectedCategory
     const matchColor = !colorSearch || (p.color || '').toLowerCase().includes(colorSearch.toLowerCase())
-    return matchSearch && matchCat && matchColor
+    // v0.30.0: View mode filter
+    const matchView = viewMode === 'all' ? true :
+      viewMode === 'active' ? p.profit_status !== 'sold_out' :
+      viewMode === 'sold_out' ? p.profit_status === 'sold_out' : true
+    return matchSearch && matchCat && matchColor && matchView
   })
 
   const categories = Array.from(new Set(products.map(p => p.category).filter((c): c is string => !!c)))
@@ -680,6 +713,36 @@ export default function Catalog() {
           <Palette className="absolute left-3 top-2.5 text-gray-500" size={16} />
           <input type="text" placeholder="Search by color..." value={colorSearch} onChange={e => setColorSearch(e.target.value)}
             className="w-full bg-slate-950 border border-gray-800 rounded-lg pl-10 pr-4 py-2 text-sm text-gray-200 focus:outline-none focus:border-violet-500" />
+        </div>
+        {/* v0.30.0: View mode toggle */}
+        <div className="flex bg-slate-950 border border-gray-800 rounded-lg overflow-hidden">
+          <button
+            onClick={() => setViewMode('active')}
+            className={`px-3 py-2 text-xs font-medium transition-colors ${
+              viewMode === 'active' ? 'bg-violet-600 text-white' : 'text-gray-400 hover:text-white'
+            }`}
+            title="Hide sold-out items (default)"
+          >
+            Active
+          </button>
+          <button
+            onClick={() => setViewMode('all')}
+            className={`px-3 py-2 text-xs font-medium transition-colors border-l border-gray-800 ${
+              viewMode === 'all' ? 'bg-violet-600 text-white' : 'text-gray-400 hover:text-white'
+            }`}
+            title="Show all items including sold-out"
+          >
+            All
+          </button>
+          <button
+            onClick={() => setViewMode('sold_out')}
+            className={`px-3 py-2 text-xs font-medium transition-colors border-l border-gray-800 ${
+              viewMode === 'sold_out' ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-amber-300'
+            }`}
+            title="Show only sold-out items (manage / reactivate)"
+          >
+            Sold Out
+          </button>
         </div>
       </div>
 
@@ -867,6 +930,16 @@ export default function Catalog() {
                       >
                         <ShoppingCart size={14} />
                       </button>
+                      {/* v0.30.0: Reactivate button — only shown for sold-out items */}
+                      {p.profit_status === 'sold_out' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleReactivateProduct(p); }}
+                          className="p-1 hover:text-emerald-400 transition-colors"
+                          title="Reactivate (mark back in stock)"
+                        >
+                          <RotateCcw size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

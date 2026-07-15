@@ -108,6 +108,9 @@ fn main() {
             commands::purchase_trips_commands::remove_trip_item,
             // v0.12.5 — Sales
             commands::sales_commands::record_sale,
+            // v0.30.0 — Sale undo + sold items reactivation
+            commands::sales_commands::undo_sale,
+            commands::sales_commands::reactivate_sold_product,
             // v0.26.0 — Customer Udhar/Credit (खाता)
             commands::udhar_commands::record_customer_payment,
             commands::udhar_commands::get_customer_balance_history,
