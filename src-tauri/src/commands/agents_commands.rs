@@ -329,13 +329,17 @@ pub async fn add_agent_manual_entry(
 }
 
 /// Update an existing agent ledger entry's amount + notes.
-/// Only balance_adjustment entries should be edited this way. Stock entries
-/// (stock_sent/stock_returned/sale_reported) have product linkage that
-/// requires recalculation — caller is responsible for calling
-/// recalc_product_stock_from_ledger if needed.
+/// v0.31.0: ALL entry types are now editable (was: balance_adjustment only).
+/// Bhai ki feedback: "1 lakh wasool entry edit/delete nahi ho rahi" — restriction
+/// hata diya. For stock entries (stock_sent/stock_returned/sale_reported),
+/// product stock is recalculated after edit via recalc_product_stock_from_ledger.
 ///
-/// For balance_adjustment entries, amount is stored as -amount (negative of
-/// user's input) — same convention as adjust_agent_balance.
+/// Amount sign convention (preserved per entry_type):
+/// - cash_received: amount stored as +amount (positive cash received)
+/// - balance_adjustment: amount stored as -amount (negative of user input)
+/// - stock_*: amount = qty * unit_price (positive)
+/// For simplicity, frontend passes the DISPLAY amount (signed by user);
+/// we preserve the existing sign convention by reading current stored sign.
 #[tauri::command]
 pub async fn update_agent_ledger_entry(
     state: State<'_, DbState>,
@@ -350,36 +354,48 @@ pub async fn update_agent_ledger_entry(
         return Err("Amount cannot be zero.".to_string());
     }
     let conn = state.0.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
 
-    // Fetch existing entry to validate it's a balance_adjustment
-    let entry_type: String = conn.query_row(
-        "SELECT entry_type FROM agent_ledger_entries WHERE id = ?1",
+    // Fetch existing entry — v0.31.0: removed restriction to balance_adjustment only
+    let (entry_type, product_id, current_amount): (String, Option<i64>, f64) = conn.query_row(
+        "SELECT entry_type, product_id, amount FROM agent_ledger_entries WHERE id = ?1",
         rusqlite::params![entry_id],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).map_err(|e| format!("Entry not found: {}", e))?;
 
-    if entry_type != "balance_adjustment" {
-        return Err(format!(
-            "Cannot edit entry of type '{}'. Only balance_adjustment entries can be edited.",
-            entry_type
-        ));
-    }
+    // v0.31.0: Preserve sign convention for the entry_type being edited.
+    // - For cash_received + stock_*: amount is stored as the user enters it (positive).
+    // - For balance_adjustment: amount is stored as -amount (negative of user input).
+    // Frontend sends DISPLAY amount (already sign-flipped for balance_adjustment),
+    // so we re-flip it before storing.
+    let stored_amount = if entry_type == "balance_adjustment" {
+        -amount
+    } else {
+        // For cash_received + stock entries: preserve sign of original entry.
+        // If original was negative (refund-like), keep negative. If positive, keep positive.
+        if current_amount < 0.0 { -amount.abs() } else { amount.abs() }
+    };
 
-    // Stored amount is -amount (negative of user input, per adjust_agent_balance convention)
-    let stored_amount = -amount;
-    let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "UPDATE agent_ledger_entries SET amount = ?1, notes = ?2, updated_at = ?3 WHERE id = ?4",
         rusqlite::params![stored_amount, &notes, &now, entry_id],
     ).map_err(|e| format!("Failed to update entry: {}", e))?;
 
+    // v0.31.0: If entry was stock-related, recalc product stock
+    if let Some(pid) = product_id {
+        if entry_type == "stock_sent" || entry_type == "stock_returned" || entry_type == "sale_reported" {
+            if let Err(e) = agents::recalc_product_stock_from_ledger(&conn, pid) {
+                // Don't fail the whole operation — log warning but proceed
+                eprintln!("Warning: failed to recalc product {} stock after entry edit: {}", pid, e);
+            }
+        }
+    }
+
     Ok(())
 }
 
-/// Delete an agent ledger entry. Only balance_adjustment entries can be
-/// deleted safely. Stock entries (stock_sent/stock_returned/sale_reported)
-/// require product stock recalculation — caller should use delete_ledger_entry
-/// directly (in agents/mod.rs) + recalc_product_stock_from_ledger if needed.
+/// Delete an agent ledger entry. v0.31.0: ALL entry types are now deletable.
+/// For stock entries, product stock is recalculated after delete.
 #[tauri::command]
 pub async fn delete_agent_ledger_entry(
     state: State<'_, DbState>,
@@ -387,22 +403,24 @@ pub async fn delete_agent_ledger_entry(
 ) -> Result<(), String> {
     let conn = state.0.lock().await;
 
-    // Fetch entry to validate it's a balance_adjustment
-    let entry_type: String = conn.query_row(
-        "SELECT entry_type FROM agent_ledger_entries WHERE id = ?1",
+    // Fetch entry — v0.31.0: removed restriction to balance_adjustment only
+    let (entry_type, product_id): (String, Option<i64>) = conn.query_row(
+        "SELECT entry_type, product_id FROM agent_ledger_entries WHERE id = ?1",
         rusqlite::params![entry_id],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?)),
     ).map_err(|e| format!("Entry not found: {}", e))?;
-
-    if entry_type != "balance_adjustment" {
-        return Err(format!(
-            "Cannot delete entry of type '{}'. Only balance_adjustment entries can be deleted.",
-            entry_type
-        ));
-    }
 
     agents::delete_ledger_entry(&conn, entry_id)
         .map_err(|e| format!("Failed to delete entry: {}", e))?;
+
+    // v0.31.0: If entry was stock-related, recalc product stock
+    if let Some(pid) = product_id {
+        if entry_type == "stock_sent" || entry_type == "stock_returned" || entry_type == "sale_reported" {
+            if let Err(e) = agents::recalc_product_stock_from_ledger(&conn, pid) {
+                eprintln!("Warning: failed to recalc product {} stock after entry delete: {}", pid, e);
+            }
+        }
+    }
 
     Ok(())
 }

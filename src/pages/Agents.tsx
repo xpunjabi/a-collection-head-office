@@ -4,7 +4,7 @@ import { useAppStore, AgentSummary, AgentLedgerEntry } from '../stores/store'
 import { fmtMoney } from '../utils/format'
 import {
   Plus, X, User, Package, Trash2,
-  ArrowDownToLine, ArrowUpFromLine, Banknote, Scale, History,
+  ArrowDownToLine, ArrowUpFromLine, Banknote, History,
   BookOpen, Pencil
 } from 'lucide-react'
 
@@ -243,11 +243,16 @@ export default function AgentsPage() {
     }
   }
 
-  // v0.29.0: Open edit modal for a balance_adjustment entry
+  // v0.29.0: Open edit modal for any entry — v0.31.0: ALL entry types editable
   const openEditEntry = (entry: AgentLedgerEntry) => {
     setEditEntry(entry)
-    // Stored amount is -amount (negative of user input), so flip sign back for display
-    setEditEntryAmount(-entry.amount)
+    // v0.31.0: Display amount based on entry_type sign convention.
+    // - balance_adjustment: stored as -amount (negative of user input), flip for display
+    // - all other types: stored as-is (positive for normal entries)
+    const displayAmount = entry.entry_type === 'balance_adjustment'
+      ? -entry.amount
+      : entry.amount
+    setEditEntryAmount(displayAmount)
     setEditEntryNotes(entry.notes || '')
     setShowEditEntryModal(true)
   }
@@ -402,9 +407,8 @@ export default function AgentsPage() {
                   <button onClick={() => openAction('cash')} className="flex items-center space-x-1 px-3 py-2 bg-green-600/10 hover:bg-green-600/20 text-green-400 border border-green-500/20 rounded-lg text-xs font-medium">
                     <Banknote size={12} /><span>Receive Cash</span>
                   </button>
-                  <button onClick={() => openAction('adjust')} className="flex items-center space-x-1 px-3 py-2 bg-amber-600/10 hover:bg-amber-600/20 text-amber-400 border border-amber-500/20 rounded-lg text-xs font-medium">
-                    <Scale size={12} /><span>Adjust Balance</span>
-                  </button>
+                  {/* v0.31.0: Removed 'Adjust Balance' button — Manual Entry (below) does the same
+                      thing with more flexibility (maal value, advance, corrections). Reduces button clutter. */}
                   {/* v0.29.0: Manual entry button — maal value/advance/correction */}
                   <button onClick={() => openManualEntry()} className="flex items-center space-x-1 px-3 py-2 bg-orange-600/10 hover:bg-orange-600/20 text-orange-400 border border-orange-500/20 rounded-lg text-xs font-medium">
                     <BookOpen size={12} /><span>Manual Entry</span>
@@ -425,52 +429,92 @@ export default function AgentsPage() {
                         <th className="text-left py-2 px-2">Type</th>
                         <th className="text-right py-2 px-2">Qty</th>
                         <th className="text-right py-2 px-2">Amount</th>
+                        {/* v0.31.0: Running balance column — bhai ko visible chahiye */}
+                        <th className="text-right py-2 px-2">Balance After</th>
                         <th className="text-left py-2 px-2">Notes</th>
-                        {/* v0.29.0: Actions column for balance_adjustment entries */}
+                        {/* v0.31.0: Actions column for ALL entries */}
                         <th className="text-right py-2 px-2">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-800">
                       {ledger.length === 0 ? (
-                        <tr><td colSpan={6} className="py-6 text-center text-gray-500">No ledger entries yet.</td></tr>
-                      ) : ledger.map(e => (
-                        <tr key={e.id} className="text-gray-300">
-                          <td className="py-2 px-2 text-gray-500">{fmtDate(e.entry_date)}</td>
-                          <td className="py-2 px-2">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                              e.entry_type === 'stock_sent' ? 'bg-emerald-900/40 text-emerald-300' :
-                              e.entry_type === 'stock_returned' ? 'bg-blue-900/40 text-blue-300' :
-                              e.entry_type === 'sale_reported' ? 'bg-violet-900/40 text-violet-300' :
-                              e.entry_type === 'cash_received' ? 'bg-green-900/40 text-green-300' :
-                              'bg-amber-900/40 text-amber-300'
-                            }`}>{e.entry_type.replace('_', ' ')}</span>
-                          </td>
-                          <td className="py-2 px-2 text-right">{e.qty > 0 ? e.qty : '—'}</td>
-                          <td className="py-2 px-2 text-right">{e.amount !== 0 ? fmtMoney(e.amount) : '—'}</td>
-                          <td className="py-2 px-2 text-gray-500 max-w-[200px] truncate">{e.notes || '—'}</td>
-                          <td className="py-2 px-2 text-right">
-                            {/* v0.29.0: Edit/Delete only for balance_adjustment entries */}
-                            {e.entry_type === 'balance_adjustment' && (
-                              <div className="flex gap-1 justify-end">
-                                <button
-                                  onClick={() => openEditEntry(e)}
-                                  className="text-gray-500 hover:text-blue-400 transition-colors"
-                                  title="Edit entry"
-                                >
-                                  <Pencil size={11} />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteEntry(e.id as number)}
-                                  className="text-gray-500 hover:text-red-400 transition-colors"
-                                  title="Delete entry"
-                                >
-                                  <Trash2 size={11} />
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
+                        <tr><td colSpan={7} className="py-6 text-center text-gray-500">No ledger entries yet.</td></tr>
+                      ) : (
+                        // v0.31.0: Compute running balance for display.
+                        // Ledger is fetched oldest-first; running_balance accumulates the
+                        // signed impact of each entry (stock_sent/cash_received/adjustment = +/-amount,
+                        // stock_returned/sale_reported = -amount since they reduce agent's debt to HO).
+                        // We use a copy because the array is reversed for display.
+                        (() => {
+                          // Reverse for display (most recent first), but compute balance oldest-first
+                          const sorted = [...ledger].sort((a, b) =>
+                            (a.entry_date || '').localeCompare(b.entry_date || '')
+                          )
+                          let running = 0
+                          const balances = new Map<number, number>()
+                          for (const e of sorted) {
+                            // Sign convention: positive amount = agent owes more (or HO gave stock)
+                            // For agent's outstanding balance to HO:
+                            //   stock_sent → +amount (agent owes more for the stock)
+                            //   stock_returned → -amount (agent owes less, stock returned)
+                            //   sale_reported → -amount (agent sold, owes less for that stock)
+                            //   cash_received → -amount (agent paid back, owes less)
+                            //   balance_adjustment → +amount (signed: + means owes more, - means less)
+                            // Note: balance_adjustment is stored as -amount in DB (per adjust_agent_balance),
+                            // so the stored amount already has the correct sign for the running balance.
+                            // For other types, we need to compute the signed contribution.
+                            let delta = 0
+                            if (e.entry_type === 'stock_sent') delta = e.amount
+                            else if (e.entry_type === 'stock_returned') delta = -e.amount
+                            else if (e.entry_type === 'sale_reported') delta = -e.amount
+                            else if (e.entry_type === 'cash_received') delta = -e.amount
+                            else if (e.entry_type === 'balance_adjustment') delta = e.amount  // stored as -user_input
+                            running += delta
+                            balances.set(e.id as number, running)
+                          }
+                          // Display in reverse (most recent first)
+                          return [...ledger].reverse().map(e => (
+                            <tr key={e.id} className="text-gray-300">
+                              <td className="py-2 px-2 text-gray-500">{fmtDate(e.entry_date)}</td>
+                              <td className="py-2 px-2">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                  e.entry_type === 'stock_sent' ? 'bg-emerald-900/40 text-emerald-300' :
+                                  e.entry_type === 'stock_returned' ? 'bg-blue-900/40 text-blue-300' :
+                                  e.entry_type === 'sale_reported' ? 'bg-violet-900/40 text-violet-300' :
+                                  e.entry_type === 'cash_received' ? 'bg-green-900/40 text-green-300' :
+                                  'bg-amber-900/40 text-amber-300'
+                                }`}>{e.entry_type.replace('_', ' ')}</span>
+                              </td>
+                              <td className="py-2 px-2 text-right">{e.qty > 0 ? e.qty : '—'}</td>
+                              <td className="py-2 px-2 text-right">{e.amount !== 0 ? fmtMoney(e.amount) : '—'}</td>
+                              {/* v0.31.0: Running balance display */}
+                              <td className="py-2 px-2 text-right font-semibold text-amber-400">
+                                {fmtMoney(balances.get(e.id as number) || 0)}
+                              </td>
+                              <td className="py-2 px-2 text-gray-500 max-w-[200px] truncate">{e.notes || '—'}</td>
+                              <td className="py-2 px-2 text-right">
+                                {/* v0.31.0: Edit/Delete for ALL entries (was balance_adjustment only) */}
+                                <div className="flex gap-1 justify-end">
+                                  <button
+                                    onClick={() => openEditEntry(e)}
+                                    className="text-gray-500 hover:text-blue-400 transition-colors"
+                                    title="Edit entry"
+                                  >
+                                    <Pencil size={11} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteEntry(e.id as number)}
+                                    className="text-gray-500 hover:text-red-400 transition-colors"
+                                    title="Delete entry"
+                                  >
+                                    <Trash2 size={11} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        })()
+                      )}
                     </tbody>
                   </table>
                 </div>
